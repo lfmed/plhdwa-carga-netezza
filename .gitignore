@@ -1,0 +1,10 @@
+# estado local do Databricks CLI (deploy) e caches
+.databricks/
+__pycache__/
+*.pyc
+.DS_Store
+# targets com dados de um ambiente específico (host, catálogo, e-mails): não versionar
+plhdwa_bundle/targets/*.yml
+!plhdwa_bundle/targets/.gitkeep
+# saídas locais do cadastro de objetos
+plhdwa_bundle/ferramentas/cadastro/

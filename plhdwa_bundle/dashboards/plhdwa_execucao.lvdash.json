@@ -1,0 +1,2045 @@
+{
+ "datasets": [
+  {
+   "name": "janela",
+   "displayName": "janela",
+   "queryLines": [
+    "SELECT (SELECT max(termino_previsto) FROM v_projecao_termino)                                   AS termino_previsto,\n",
+    "       (SELECT coalesce(sum(pendentes_qtd), 0) FROM v_projecao_termino)                         AS pendentes_qtd,\n",
+    "       (SELECT round(coalesce(sum(pendentes_bytes), 0) / 1073741824, 2) FROM v_projecao_termino) AS pendentes_gb,\n",
+    "       (SELECT count(*) FROM v_em_execucao)                                                      AS em_execucao,\n",
+    "       -- objetos diferentes em processamento agora (no máximo 1 arquivo por objeto, em qualquer modo)\n",
+    "       (SELECT count(DISTINCT cod_objeto) FROM v_em_execucao)                                    AS objetos_em_execucao,\n",
+    "       (SELECT count(*) FROM v_lote WHERE status = 'EM_ANDAMENTO')                               AS lotes_em_andamento,\n",
+    "       -- foto do último ciclo do despachante (conta também os jobs ainda na fila do Jobs); 0 se não há lote rodando\n",
+    "       (SELECT coalesce(max(em_andamento) FILTER (WHERE fila = 'JOB'), 0) FROM log_ciclo_despachante\n",
+    "         WHERE ciclo_ts = (SELECT max(ciclo_ts) FROM log_ciclo_despachante)\n",
+    "           AND EXISTS (SELECT 1 FROM v_lote WHERE status = 'EM_ANDAMENTO'))                       AS jobs_em_execucao,\n",
+    "       (SELECT coalesce(max(em_andamento) FILTER (WHERE fila = 'DESPACHANTE'), 0) FROM log_ciclo_despachante\n",
+    "         WHERE ciclo_ts = (SELECT max(ciclo_ts) FROM log_ciclo_despachante)\n",
+    "           AND EXISTS (SELECT 1 FROM v_lote WHERE status = 'EM_ANDAMENTO'))                       AS threads_despachante,\n",
+    "       (SELECT count(*) FROM v_arquivo_concluido WHERE concluido_em >= current_date())          AS concluidos_hoje,\n",
+    "       (SELECT round(coalesce(sum(tamanho_bytes), 0) / 1073741824, 2) FROM v_arquivo_concluido\n",
+    "         WHERE concluido_em >= current_date())                                                           AS gb_hoje,\n",
+    "       (SELECT coalesce(sum(qtd_inserida), 0) FROM v_arquivo_concluido WHERE concluido_em >= current_date()) AS registros_hoje,\n",
+    "       (SELECT count(*) FROM v_objeto_travado)                                                   AS objetos_travados\n"
+   ]
+  },
+  {
+   "name": "backlog_fila",
+   "displayName": "backlog_fila",
+   "queryLines": [
+    "SELECT fila AS modo, pendentes_qtd, round(pendentes_bytes / 1048576, 1) AS pendentes_mb, em_andamento, max_simult,\n",
+    "       termino_previsto\n",
+    "FROM v_projecao_termino\n"
+   ]
+  },
+  {
+   "name": "em_execucao",
+   "displayName": "em_execucao",
+   "queryLines": [
+    "SELECT arquivo_ctl, cod_objeto, estado, modo, tipo_job, lote_id, job_run_id, round(tamanho_bytes / 1048576, 1) AS mb,\n",
+    "       desde, segundos\n",
+    "FROM v_em_execucao\n",
+    "ORDER BY desde\n"
+   ]
+  },
+  {
+   "name": "objetos_execucao",
+   "displayName": "objetos_execucao",
+   "queryLines": [
+    "-- Um objeto por linha: o arquivo que está rodando agora e quantos arquivos do objeto o lote já concluiu.\n",
+    "WITH concluidos AS (\n",
+    "  SELECT lote_id, cod_objeto, count(DISTINCT arquivo_ctl) AS concluidos_no_lote\n",
+    "  FROM log_carga_evento\n",
+    "  WHERE status = 'CONCLUIDO' AND evento_ts >= current_timestamp() - INTERVAL 12 HOURS\n",
+    "  GROUP BY 1, 2\n",
+    ")\n",
+    "SELECT e.cod_objeto, e.tabela_destino, e.modo, e.tipo_job, e.estado, e.arquivo_ctl AS arquivo_atual,\n",
+    "       round(e.tamanho_bytes / 1048576, 1) AS mb, e.desde, e.segundos, e.lote_id,\n",
+    "       coalesce(c.concluidos_no_lote, 0) AS concluidos_no_lote\n",
+    "FROM v_em_execucao e\n",
+    "LEFT JOIN concluidos c ON c.lote_id = e.lote_id AND c.cod_objeto = e.cod_objeto\n",
+    "ORDER BY e.modo, e.desde\n"
+   ]
+  },
+  {
+   "name": "lotes",
+   "displayName": "lotes",
+   "queryLines": [
+    "SELECT lote_id, status, inicio, fim, minutos, pendentes_no_inicio, arquivos_iniciados, arquivos_concluidos,\n",
+    "       arquivos_com_erro, concluidos_em_job, registros\n",
+    "FROM v_lote\n",
+    "WHERE inicio >= date_sub(current_date(), 7)\n",
+    "ORDER BY inicio DESC\n",
+    "LIMIT 50\n"
+   ]
+  },
+  {
+   "name": "ciclos",
+   "displayName": "ciclos",
+   "queryLines": [
+    "SELECT ciclo_ts, fila AS modo, pendentes_qtd, round(pendentes_bytes / 1048576, 1) AS pendentes_mb, em_andamento, max_simult\n",
+    "FROM log_ciclo_despachante\n",
+    "WHERE ciclo_ts >= date_sub(current_date(), 1)\n"
+   ]
+  },
+  {
+   "name": "travados",
+   "displayName": "travados",
+   "queryLines": [
+    "SELECT cod_objeto, erro, arquivo_ctl, left(mensagem, 400) AS mensagem, desde\n",
+    "FROM v_objeto_travado\n"
+   ]
+  },
+  {
+   "name": "eventos",
+   "displayName": "eventos",
+   "queryLines": [
+    "SELECT evento_ts, cod_objeto, arquivo_ctl, status, fila, tipo_job, tabela_destino, left(mensagem, 300) AS mensagem\n",
+    "FROM log_carga_evento\n",
+    "WHERE evento_ts >= date_sub(current_date(), 1)\n",
+    "ORDER BY evento_ts DESC\n",
+    "LIMIT 2000\n"
+   ]
+  },
+  {
+   "name": "controle",
+   "displayName": "controle",
+   "queryLines": [
+    "SELECT confirmado_em, cod_objeto, arquivo, status, modo_execucao, lote_id, qtd_registros, dt_inicio, dt_fim,\n",
+    "       left(mensagem, 200) AS mensagem\n",
+    "FROM db2_controle_sim\n",
+    "WHERE confirmado_em >= date_sub(current_date(), 1)\n",
+    "ORDER BY confirmado_em DESC\n",
+    "LIMIT 1000\n"
+   ]
+  },
+  {
+   "name": "desempenho",
+   "displayName": "desempenho",
+   "queryLines": [
+    "SELECT arquivo_ctl, cod_objeto, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, lote_id,\n",
+    "       round(tamanho_bytes / 1048576, 1)                                         AS tamanho_mb,\n",
+    "       unix_timestamp(concluido_em) - unix_timestamp(roteado_em)                 AS duracao_s,\n",
+    "       unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)                  AS carga_s,\n",
+    "       round(tamanho_bytes / 1073741824 /\n",
+    "             greatest(unix_timestamp(concluido_em) - unix_timestamp(roteado_em), 1) * 60, 3) AS gb_por_min,\n",
+    "       concluido_em, qtd_inserida\n",
+    "FROM v_arquivo_concluido\n",
+    "WHERE concluido_em >= date_sub(current_date(), 30)\n"
+   ]
+  },
+  {
+   "name": "diario",
+   "displayName": "diario",
+   "queryLines": [
+    "SELECT date(concluido_em) AS dia, count(*) AS arquivos, round(sum(tamanho_bytes) / 1073741824, 3) AS gb,\n",
+    "       max(concluido_em) AS ultimo_concluido, sum(qtd_inserida) AS linhas\n",
+    "FROM v_arquivo_concluido\n",
+    "WHERE concluido_em >= date_sub(current_date(), 30)\n",
+    "GROUP BY 1\n"
+   ]
+  },
+  {
+   "name": "erros_dia",
+   "displayName": "erros_dia",
+   "queryLines": [
+    "SELECT date(evento_ts) AS dia, status, count(*) AS qtd\n",
+    "FROM log_carga_evento\n",
+    "WHERE (status LIKE 'ERRO%' OR status = 'ALERTA_FORMATO') AND evento_ts >= date_sub(current_date(), 30)\n",
+    "GROUP BY 1, 2\n"
+   ]
+  },
+  {
+   "name": "filas",
+   "displayName": "filas",
+   "queryLines": [
+    "SELECT modo, max_simult, job_id_perf, job_id_std, alterado_por, alterado_em\n",
+    "FROM ctl_execucao\n",
+    "ORDER BY modo\n"
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "agora",
+   "displayName": "Em execução",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_agora",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## PLHDWA · Em execução agora"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "s_agora",
+      "multilineTextboxSpec": {
+       "lines": [
+        "Lotes (execuções do despachante) e arquivos em processamento · modo DESPACHANTE (threads) ou JOB (job independente)"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "k_objetos",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "objetos_em_execucao",
+           "expression": "`objetos_em_execucao`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "objetos_em_execucao",
+         "displayName": "Objetos em execução"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Objetos em execução"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_threads",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "threads_despachante",
+           "expression": "`threads_despachante`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "threads_despachante",
+         "displayName": "Arquivos rodando no despachante"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos rodando no despachante"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_jobs",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "jobs_em_execucao",
+           "expression": "`jobs_em_execucao`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "jobs_em_execucao",
+         "displayName": "Jobs independentes em execução"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Jobs independentes em execução"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_lotes",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "lotes_em_andamento",
+           "expression": "`lotes_em_andamento`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "lotes_em_andamento",
+         "displayName": "Despachante: lotes em andamento"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Despachante: lotes em andamento"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_pend",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "pendentes_qtd",
+           "expression": "`pendentes_qtd`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "pendentes_qtd",
+         "displayName": "Arquivos aguardando"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos aguardando"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 5,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_trav",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "objetos_travados",
+           "expression": "`objetos_travados`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "objetos_travados",
+         "displayName": "Objetos travados"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Objetos travados"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 5,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_concl",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "concluidos_hoje",
+           "expression": "`concluidos_hoje`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "concluidos_hoje",
+         "displayName": "Arquivos concluídos hoje"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos concluídos hoje"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 8,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_reg",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "registros_hoje",
+           "expression": "`registros_hoje`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "registros_hoje",
+         "displayName": "Registros carregados hoje"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Registros carregados hoje"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 8,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_gb",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "janela",
+         "fields": [
+          {
+           "name": "gb_hoje",
+           "expression": "`gb_hoje`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "gb_hoje",
+         "displayName": "GB carregados hoje"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "GB carregados hoje"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 8,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "t_objexec",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "objetos_execucao",
+         "fields": [
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "tabela_destino",
+           "expression": "`tabela_destino`"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          },
+          {
+           "name": "estado",
+           "expression": "`estado`"
+          },
+          {
+           "name": "arquivo_atual",
+           "expression": "`arquivo_atual`"
+          },
+          {
+           "name": "mb",
+           "expression": "`mb`"
+          },
+          {
+           "name": "segundos",
+           "expression": "`segundos`"
+          },
+          {
+           "name": "concluidos_no_lote",
+           "expression": "`concluidos_no_lote`"
+          },
+          {
+           "name": "lote_id",
+           "expression": "`lote_id`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "tabela_destino",
+          "displayName": "Tabela destino"
+         },
+         {
+          "fieldName": "modo",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "tipo_job",
+          "displayName": "Tipo do job"
+         },
+         {
+          "fieldName": "estado",
+          "displayName": "Estado"
+         },
+         {
+          "fieldName": "arquivo_atual",
+          "displayName": "Arquivo atual"
+         },
+         {
+          "fieldName": "mb",
+          "displayName": "MB"
+         },
+         {
+          "fieldName": "segundos",
+          "displayName": "Segundos no arquivo"
+         },
+         {
+          "fieldName": "concluidos_no_lote",
+          "displayName": "Concluídos no lote"
+         },
+         {
+          "fieldName": "lote_id",
+          "displayName": "Lote"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Objetos em execução (1 linha por objeto)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 11,
+      "width": 6,
+      "height": 7
+     }
+    },
+    {
+     "widget": {
+      "name": "t_exec",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "em_execucao",
+         "fields": [
+          {
+           "name": "desde",
+           "expression": "`desde`"
+          },
+          {
+           "name": "segundos",
+           "expression": "`segundos`"
+          },
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "estado",
+           "expression": "`estado`"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          },
+          {
+           "name": "mb",
+           "expression": "`mb`"
+          },
+          {
+           "name": "lote_id",
+           "expression": "`lote_id`"
+          },
+          {
+           "name": "job_run_id",
+           "expression": "`job_run_id`"
+          },
+          {
+           "name": "arquivo_ctl",
+           "expression": "`arquivo_ctl`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "desde",
+          "displayName": "Desde"
+         },
+         {
+          "fieldName": "segundos",
+          "displayName": "Segundos"
+         },
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "estado",
+          "displayName": "Estado"
+         },
+         {
+          "fieldName": "modo",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "tipo_job",
+          "displayName": "Tipo do job"
+         },
+         {
+          "fieldName": "mb",
+          "displayName": "MB"
+         },
+         {
+          "fieldName": "lote_id",
+          "displayName": "Lote"
+         },
+         {
+          "fieldName": "job_run_id",
+          "displayName": "Execução"
+         },
+         {
+          "fieldName": "arquivo_ctl",
+          "displayName": "Arquivo"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos em execução (ROTEADO = job independente arrancando)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 18,
+      "width": 6,
+      "height": 7
+     }
+    },
+    {
+     "widget": {
+      "name": "t_lotes",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "lotes",
+         "fields": [
+          {
+           "name": "lote_id",
+           "expression": "`lote_id`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "inicio",
+           "expression": "`inicio`"
+          },
+          {
+           "name": "fim",
+           "expression": "`fim`"
+          },
+          {
+           "name": "minutos",
+           "expression": "`minutos`"
+          },
+          {
+           "name": "pendentes_no_inicio",
+           "expression": "`pendentes_no_inicio`"
+          },
+          {
+           "name": "arquivos_concluidos",
+           "expression": "`arquivos_concluidos`"
+          },
+          {
+           "name": "concluidos_em_job",
+           "expression": "`concluidos_em_job`"
+          },
+          {
+           "name": "arquivos_com_erro",
+           "expression": "`arquivos_com_erro`"
+          },
+          {
+           "name": "registros",
+           "expression": "`registros`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "lote_id",
+          "displayName": "Lote"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "Status"
+         },
+         {
+          "fieldName": "inicio",
+          "displayName": "Início"
+         },
+         {
+          "fieldName": "fim",
+          "displayName": "Fim"
+         },
+         {
+          "fieldName": "minutos",
+          "displayName": "Min"
+         },
+         {
+          "fieldName": "pendentes_no_inicio",
+          "displayName": "Pendentes no início"
+         },
+         {
+          "fieldName": "arquivos_concluidos",
+          "displayName": "Concluídos"
+         },
+         {
+          "fieldName": "concluidos_em_job",
+          "displayName": "Em job"
+         },
+         {
+          "fieldName": "arquivos_com_erro",
+          "displayName": "Com erro"
+         },
+         {
+          "fieldName": "registros",
+          "displayName": "Registros"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Lotes (últimos 7 dias)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 25,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_ocupacao",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "backlog_fila",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "em_andamento",
+           "expression": "`em_andamento`"
+          },
+          {
+           "name": "max_simult",
+           "expression": "`max_simult`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        },
+        "y": {
+         "scale": {
+          "type": "quantitative"
+         },
+         "fields": [
+          {
+           "fieldName": "em_andamento",
+           "displayName": "Em andamento"
+          },
+          {
+           "fieldName": "max_simult",
+           "displayName": "Limite (max_simult)"
+          }
+         ]
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Em andamento × limite por modo"
+       },
+       "mark": {
+        "layout": "group"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 31,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_backlog",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "backlog_fila",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "pendentes_qtd",
+           "expression": "`pendentes_qtd`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        },
+        "y": {
+         "fieldName": "pendentes_qtd",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Aguardando"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos aguardando por modo"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 31,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_ciclos",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ciclos",
+         "fields": [
+          {
+           "name": "ciclo_ts",
+           "expression": "`ciclo_ts`"
+          },
+          {
+           "name": "sum(em_andamento)",
+           "expression": "SUM(`em_andamento`)"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "ciclo_ts",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Ciclo"
+        },
+        "y": {
+         "fieldName": "sum(em_andamento)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Em andamento"
+        },
+        "color": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Em andamento ao longo do tempo"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 36,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "t_filas",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "filas",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "max_simult",
+           "expression": "`max_simult`"
+          },
+          {
+           "name": "job_id_perf",
+           "expression": "`job_id_perf`"
+          },
+          {
+           "name": "job_id_std",
+           "expression": "`job_id_std`"
+          },
+          {
+           "name": "alterado_por",
+           "expression": "`alterado_por`"
+          },
+          {
+           "name": "alterado_em",
+           "expression": "`alterado_em`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "modo",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "max_simult",
+          "displayName": "Simultâneos"
+         },
+         {
+          "fieldName": "job_id_perf",
+          "displayName": "Job Performance"
+         },
+         {
+          "fieldName": "job_id_std",
+          "displayName": "Job Standard"
+         },
+         {
+          "fieldName": "alterado_por",
+          "displayName": "Alterado por"
+         },
+         {
+          "fieldName": "alterado_em",
+          "displayName": "Alterado em"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Limites por modo (ctl_execucao)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 42,
+      "width": 6,
+      "height": 4
+     }
+    }
+   ]
+  },
+  {
+   "name": "objetos",
+   "displayName": "Objetos e controle",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_obj",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Objetos travados, eventos e controle"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f_status",
+      "queries": [
+       {
+        "name": "eventos_status",
+        "query": {
+         "datasetName": "eventos",
+         "fields": [
+          {
+           "name": "status",
+           "expression": "`status`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "status",
+          "displayName": "Status",
+          "queryName": "eventos_status"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Status"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_cod",
+      "queries": [
+       {
+        "name": "eventos_cod_objeto",
+        "query": {
+         "datasetName": "eventos",
+         "fields": [
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto",
+          "queryName": "eventos_cod_objeto"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Objeto"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 1,
+      "width": 3,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "t_trav",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "travados",
+         "fields": [
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "erro",
+           "expression": "`erro`"
+          },
+          {
+           "name": "desde",
+           "expression": "`desde`"
+          },
+          {
+           "name": "arquivo_ctl",
+           "expression": "`arquivo_ctl`"
+          },
+          {
+           "name": "mensagem",
+           "expression": "`mensagem`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "erro",
+          "displayName": "Erro"
+         },
+         {
+          "fieldName": "desde",
+          "displayName": "Desde"
+         },
+         {
+          "fieldName": "arquivo_ctl",
+          "displayName": "Arquivo"
+         },
+         {
+          "fieldName": "mensagem",
+          "displayName": "Mensagem"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Objetos travados (destravar com evento DESBLOQUEIO)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 3,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "t_ev",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "eventos",
+         "fields": [
+          {
+           "name": "evento_ts",
+           "expression": "`evento_ts`"
+          },
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "fila",
+           "expression": "`fila`"
+          },
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          },
+          {
+           "name": "arquivo_ctl",
+           "expression": "`arquivo_ctl`"
+          },
+          {
+           "name": "mensagem",
+           "expression": "`mensagem`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "evento_ts",
+          "displayName": "Quando"
+         },
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "Status"
+         },
+         {
+          "fieldName": "fila",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "tipo_job",
+          "displayName": "Tipo"
+         },
+         {
+          "fieldName": "arquivo_ctl",
+          "displayName": "Arquivo"
+         },
+         {
+          "fieldName": "mensagem",
+          "displayName": "Mensagem"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Eventos (últimas 24 h)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 9,
+      "width": 6,
+      "height": 9
+     }
+    },
+    {
+     "widget": {
+      "name": "t_ctl",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "controle",
+         "fields": [
+          {
+           "name": "confirmado_em",
+           "expression": "`confirmado_em`"
+          },
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "modo_execucao",
+           "expression": "`modo_execucao`"
+          },
+          {
+           "name": "qtd_registros",
+           "expression": "`qtd_registros`"
+          },
+          {
+           "name": "dt_inicio",
+           "expression": "`dt_inicio`"
+          },
+          {
+           "name": "dt_fim",
+           "expression": "`dt_fim`"
+          },
+          {
+           "name": "lote_id",
+           "expression": "`lote_id`"
+          },
+          {
+           "name": "arquivo",
+           "expression": "`arquivo`"
+          },
+          {
+           "name": "mensagem",
+           "expression": "`mensagem`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "confirmado_em",
+          "displayName": "Quando"
+         },
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "Status na controle"
+         },
+         {
+          "fieldName": "modo_execucao",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "qtd_registros",
+          "displayName": "Registros"
+         },
+         {
+          "fieldName": "dt_inicio",
+          "displayName": "Início"
+         },
+         {
+          "fieldName": "dt_fim",
+          "displayName": "Fim"
+         },
+         {
+          "fieldName": "lote_id",
+          "displayName": "Lote"
+         },
+         {
+          "fieldName": "arquivo",
+          "displayName": "Arquivo"
+         },
+         {
+          "fieldName": "mensagem",
+          "displayName": "Mensagem"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Controle (Db2 simulado): EM_PROCESSAMENTO · ERRO · CONCLUIDO por arquivo"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 18,
+      "width": 6,
+      "height": 8
+     }
+    }
+   ]
+  },
+  {
+   "name": "desempenho",
+   "displayName": "Desempenho",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "h_des",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Desempenho por modo e tipo de job"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "g_dur",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "desempenho",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "avg(duracao_s)",
+           "expression": "AVG(`duracao_s`)"
+          },
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        },
+        "y": {
+         "fieldName": "avg(duracao_s)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Segundos"
+        },
+        "color": {
+         "fieldName": "tipo_job",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Tipo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Duração média por arquivo (s)"
+       },
+       "mark": {
+        "layout": "group"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_gbmin",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "desempenho",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "avg(gb_por_min)",
+           "expression": "AVG(`gb_por_min`)"
+          },
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        },
+        "y": {
+         "fieldName": "avg(gb_por_min)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "GB/min"
+        },
+        "color": {
+         "fieldName": "tipo_job",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Tipo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Vazão média (GB/min)"
+       },
+       "mark": {
+        "layout": "group"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 1,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "t_des",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "desempenho",
+         "fields": [
+          {
+           "name": "concluido_em",
+           "expression": "`concluido_em`"
+          },
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          },
+          {
+           "name": "lote_id",
+           "expression": "`lote_id`"
+          },
+          {
+           "name": "tamanho_mb",
+           "expression": "`tamanho_mb`"
+          },
+          {
+           "name": "duracao_s",
+           "expression": "`duracao_s`"
+          },
+          {
+           "name": "carga_s",
+           "expression": "`carga_s`"
+          },
+          {
+           "name": "qtd_inserida",
+           "expression": "`qtd_inserida`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "concluido_em",
+          "displayName": "Concluído"
+         },
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "modo",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "tipo_job",
+          "displayName": "Tipo"
+         },
+         {
+          "fieldName": "lote_id",
+          "displayName": "Lote"
+         },
+         {
+          "fieldName": "tamanho_mb",
+          "displayName": "MB"
+         },
+         {
+          "fieldName": "duracao_s",
+          "displayName": "Duração (s)"
+         },
+         {
+          "fieldName": "carga_s",
+          "displayName": "Carga (s)"
+         },
+         {
+          "fieldName": "qtd_inserida",
+          "displayName": "Registros"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos concluídos (30 dias)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 6,
+      "width": 6,
+      "height": 7
+     }
+    }
+   ]
+  },
+  {
+   "name": "historico",
+   "displayName": "Histórico",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_hist",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Histórico (30 dias)"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "g_gbdia",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "diario",
+         "fields": [
+          {
+           "name": "dia",
+           "expression": "`dia`"
+          },
+          {
+           "name": "arquivos",
+           "expression": "`arquivos`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "dia",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Dia"
+        },
+        "y": {
+         "fieldName": "arquivos",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Arquivos"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos concluídos por dia"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_errdia",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "erros_dia",
+         "fields": [
+          {
+           "name": "dia",
+           "expression": "`dia`"
+          },
+          {
+           "name": "sum(qtd)",
+           "expression": "SUM(`qtd`)"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "dia",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Dia"
+        },
+        "y": {
+         "fieldName": "sum(qtd)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Eventos"
+        },
+        "color": {
+         "fieldName": "status",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Tipo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Erros e alertas por dia"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 1,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "t_dia",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "diario",
+         "fields": [
+          {
+           "name": "dia",
+           "expression": "`dia`"
+          },
+          {
+           "name": "arquivos",
+           "expression": "`arquivos`"
+          },
+          {
+           "name": "gb",
+           "expression": "`gb`"
+          },
+          {
+           "name": "linhas",
+           "expression": "`linhas`"
+          },
+          {
+           "name": "ultimo_concluido",
+           "expression": "`ultimo_concluido`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "dia",
+          "displayName": "Dia"
+         },
+         {
+          "fieldName": "arquivos",
+          "displayName": "Arquivos"
+         },
+         {
+          "fieldName": "gb",
+          "displayName": "GB"
+         },
+         {
+          "fieldName": "linhas",
+          "displayName": "Registros"
+         },
+         {
+          "fieldName": "ultimo_concluido",
+          "displayName": "Último concluído"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Resumo diário"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 6,
+      "width": 6,
+      "height": 6
+     }
+    }
+   ]
+  }
+ ]
+}

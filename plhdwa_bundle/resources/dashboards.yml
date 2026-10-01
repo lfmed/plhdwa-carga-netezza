@@ -1,0 +1,17 @@
+# Dashboards AI/BI do PLHDWA (gerados por dashboards/gerar_dashboards.py a partir de datasets.sql).
+# As consultas não têm catálogo/schema: dataset_catalog e dataset_schema apontam para as tabelas operacionais
+# do ambiente. Depois do deploy, publique (ou rode "databricks bundle deploy" e publique pela tela).
+resources:
+  dashboards:
+    plhdwa_execucao:
+      display_name: "PLHDWA · Execução"
+      file_path: ../dashboards/plhdwa_execucao.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalogo}
+      dataset_schema: ${var.schema}
+    plhdwa_custo:
+      display_name: "PLHDWA · Custo"
+      file_path: ../dashboards/plhdwa_custo.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalogo}
+      dataset_schema: ${var.schema}

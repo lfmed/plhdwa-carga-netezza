@@ -1,0 +1,2 @@
+cod;ddl;tabela;tipo;col_data;col_inst;execucao;tipo_job
+1230;ddl_external_dwa_ccr_fatparcela.sql;fat_parcela;FATO;SK_TMO_MVM;SK_INS;DESPACHANTE;PERFORMANCE_OPTIMIZED

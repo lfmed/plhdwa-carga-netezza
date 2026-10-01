@@ -1,0 +1,556 @@
+{
+ "datasets": [
+  {
+   "name": "custo",
+   "displayName": "custo",
+   "queryLines": [
+    "WITH jobs AS (\n",
+    "  SELECT job_id, max_by(name, change_time) AS job\n",
+    "  FROM system.lakeflow.jobs\n",
+    "  WHERE tags['OWNER'] = 'PLHDWA'\n",
+    "  GROUP BY job_id\n",
+    "), uso AS (\n",
+    "  SELECT u.usage_date, u.usage_metadata.job_id AS job_id, u.usage_metadata.job_run_id AS job_run_id, u.sku_name,\n",
+    "         coalesce(u.product_features.performance_target, 'n/d') AS tipo_job,\n",
+    "         u.usage_quantity AS dbus,\n",
+    "         u.usage_quantity * p.pricing.default AS custo_usd\n",
+    "  FROM system.billing.usage u\n",
+    "  JOIN system.billing.list_prices p\n",
+    "    ON u.sku_name = p.sku_name AND u.usage_start_time >= p.price_start_time\n",
+    "   AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)\n",
+    "  WHERE u.usage_date >= date_sub(current_date(), 30)\n",
+    "    AND (u.custom_tags['OWNER'] = 'PLHDWA' OR u.usage_metadata.job_id IN (SELECT job_id FROM jobs))\n",
+    ")\n",
+    "SELECT uso.usage_date, coalesce(j.job, concat('job ', uso.job_id), 'outros (tag OWNER)') AS job, uso.job_run_id,\n",
+    "       uso.sku_name, uso.tipo_job, uso.dbus, round(uso.custo_usd, 4) AS custo_usd\n",
+    "FROM uso LEFT JOIN jobs j ON uso.job_id = j.job_id\n"
+   ]
+  },
+  {
+   "name": "custo_fila",
+   "displayName": "custo_fila",
+   "queryLines": [
+    "WITH arquivo_run AS (\n",
+    "  SELECT CAST(job_run_id AS STRING) AS job_run_id, max(fila) AS fila\n",
+    "  FROM log_carga_evento WHERE status = 'CARREGADO' GROUP BY 1\n",
+    "), uso AS (\n",
+    "  SELECT u.usage_date, u.usage_metadata.job_run_id AS job_run_id,\n",
+    "         u.usage_quantity * p.pricing.default AS custo_usd\n",
+    "  FROM system.billing.usage u\n",
+    "  JOIN system.billing.list_prices p\n",
+    "    ON u.sku_name = p.sku_name AND u.usage_start_time >= p.price_start_time\n",
+    "   AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)\n",
+    "  WHERE u.usage_date >= date_sub(current_date(), 30)\n",
+    "    AND u.usage_metadata.job_run_id IN (SELECT job_run_id FROM arquivo_run)\n",
+    ")\n",
+    "SELECT uso.usage_date, coalesce(a.fila, 'despacho / outros') AS modo, round(sum(uso.custo_usd), 4) AS custo_usd\n",
+    "FROM uso LEFT JOIN arquivo_run a USING (job_run_id)\n",
+    "GROUP BY 1, 2\n"
+   ]
+  },
+  {
+   "name": "custo_tb",
+   "displayName": "custo_tb",
+   "queryLines": [
+    "WITH custo AS (\n",
+    "  SELECT u.usage_date AS dia, sum(u.usage_quantity * p.pricing.default) AS custo_usd\n",
+    "  FROM system.billing.usage u\n",
+    "  JOIN system.billing.list_prices p\n",
+    "    ON u.sku_name = p.sku_name AND u.usage_start_time >= p.price_start_time\n",
+    "   AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)\n",
+    "  WHERE u.usage_date >= date_sub(current_date(), 30)\n",
+    "    AND (u.custom_tags['OWNER'] = 'PLHDWA' OR u.usage_metadata.job_id IN\n",
+    "         (SELECT job_id FROM system.lakeflow.jobs WHERE tags['OWNER'] = 'PLHDWA'))\n",
+    "  GROUP BY 1\n",
+    "), volume AS (\n",
+    "  SELECT date(concluido_em) AS dia, sum(tamanho_bytes) / 1099511627776 AS tb\n",
+    "  FROM v_arquivo_concluido GROUP BY 1\n",
+    ")\n",
+    "SELECT c.dia, round(c.custo_usd, 2) AS custo_usd, round(v.tb, 6) AS tb_carregado,\n",
+    "       round(c.custo_usd / nullif(v.tb, 0), 2) AS custo_por_tb_usd\n",
+    "FROM custo c LEFT JOIN volume v USING (dia)\n"
+   ]
+  },
+  {
+   "name": "custo_objeto",
+   "displayName": "custo_objeto",
+   "queryLines": [
+    "WITH run_obj AS (\n",
+    "  SELECT CAST(job_run_id AS STRING) AS job_run_id, cod_objeto, fila, sum(tamanho_bytes) AS bytes\n",
+    "  FROM log_carga_evento WHERE status = 'CARREGADO' GROUP BY 1, 2, 3\n",
+    "), peso AS (\n",
+    "  SELECT *, bytes / sum(bytes) OVER (PARTITION BY job_run_id) AS fracao FROM run_obj\n",
+    "), uso AS (\n",
+    "  SELECT u.usage_metadata.job_run_id AS job_run_id, sum(u.usage_quantity * p.pricing.default) AS custo_usd\n",
+    "  FROM system.billing.usage u\n",
+    "  JOIN system.billing.list_prices p\n",
+    "    ON u.sku_name = p.sku_name AND u.usage_start_time >= p.price_start_time\n",
+    "   AND (p.price_end_time IS NULL OR u.usage_start_time < p.price_end_time)\n",
+    "  WHERE u.usage_date >= date_sub(current_date(), 30)\n",
+    "    AND u.usage_metadata.job_run_id IN (SELECT job_run_id FROM run_obj)\n",
+    "  GROUP BY 1\n",
+    ")\n",
+    "SELECT p.cod_objeto, max(p.fila) AS modo, round(sum(u.custo_usd * p.fracao), 4) AS custo_usd,\n",
+    "       round(sum(p.bytes) / 1073741824, 3) AS gb\n",
+    "FROM peso p JOIN uso u USING (job_run_id)\n",
+    "GROUP BY 1\n",
+    "ORDER BY custo_usd DESC\n",
+    "LIMIT 20\n"
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "custo",
+   "displayName": "Custo",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_custo",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## PLHDWA · Custo"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "s_custo",
+      "multilineTextboxSpec": {
+       "lines": [
+        "Consumo dos jobs com a tag OWNER = PLHDWA · valores a preço de lista (sem descontos) · o billing pode levar algumas horas para atualizar"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "k_usd",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo",
+         "fields": [
+          {
+           "name": "sum(custo_usd)",
+           "expression": "SUM(`custo_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(custo_usd)",
+         "displayName": "Custo 30 dias (US$)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Custo 30 dias (US$)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_dbu",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo",
+         "fields": [
+          {
+           "name": "sum(dbus)",
+           "expression": "SUM(`dbus`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(dbus)",
+         "displayName": "DBUs 30 dias"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "DBUs 30 dias"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_runs",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo",
+         "fields": [
+          {
+           "name": "countdistinct(job_run_id)",
+           "expression": "COUNT(DISTINCT `job_run_id`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(job_run_id)",
+         "displayName": "Execuções"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Execuções"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "g_dia",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo",
+         "fields": [
+          {
+           "name": "daily(usage_date)",
+           "expression": "DATE_TRUNC(\"DAY\", `usage_date`)"
+          },
+          {
+           "name": "sum(custo_usd)",
+           "expression": "SUM(`custo_usd`)"
+          },
+          {
+           "name": "job",
+           "expression": "`job`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "daily(usage_date)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Dia"
+        },
+        "y": {
+         "fieldName": "sum(custo_usd)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "US$"
+        },
+        "color": {
+         "fieldName": "job",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Job"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Custo diário por job"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_tipo",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo",
+         "fields": [
+          {
+           "name": "tipo_job",
+           "expression": "`tipo_job`"
+          },
+          {
+           "name": "sum(custo_usd)",
+           "expression": "SUM(`custo_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "tipo_job",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Tipo do job"
+        },
+        "y": {
+         "fieldName": "sum(custo_usd)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "US$"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Custo por tipo de job"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 11,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_fila",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo_fila",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "sum(custo_usd)",
+           "expression": "SUM(`custo_usd`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        },
+        "y": {
+         "fieldName": "sum(custo_usd)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "US$"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Custo por modo (JOB exato; DESPACHANTE inclui o despacho)"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 11,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_tb",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo_tb",
+         "fields": [
+          {
+           "name": "dia",
+           "expression": "`dia`"
+          },
+          {
+           "name": "custo_por_tb_usd",
+           "expression": "`custo_por_tb_usd`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "dia",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Dia"
+        },
+        "y": {
+         "fieldName": "custo_por_tb_usd",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "US$/TB"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Custo por TB carregado"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 16,
+      "width": 6,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "t_obj",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "custo_objeto",
+         "fields": [
+          {
+           "name": "cod_objeto",
+           "expression": "`cod_objeto`"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "custo_usd",
+           "expression": "`custo_usd`"
+          },
+          {
+           "name": "gb",
+           "expression": "`gb`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "cod_objeto",
+          "displayName": "Objeto"
+         },
+         {
+          "fieldName": "modo",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "custo_usd",
+          "displayName": "US$"
+         },
+         {
+          "fieldName": "gb",
+          "displayName": "GB"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Top 20 objetos por custo (DESPACHANTE por rateio de GB)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 21,
+      "width": 6,
+      "height": 6
+     }
+    }
+   ]
+  }
+ ]
+}

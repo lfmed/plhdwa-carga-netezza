@@ -1,0 +1,197 @@
+# =====================================================================================================
+# PLHDWA · motor de carga Netezza -> Databricks (Databricks Asset Bundle)
+#
+# Para instalar num ambiente: preencha as variáveis do target (dev, hml ou prd) abaixo e rode
+#   databricks bundle deploy -t <target>
+#   databricks bundle run plhdwa_pos_deploy -t <target>      # cria tabelas/visões, grava os jobs, controle
+# Tudo o que muda de um ambiente para outro é variável: nada fica fixo no código.
+# Passo a passo completo: README.md.
+# =====================================================================================================
+bundle:
+  name: plhdwa
+
+include:
+  - resources/*.yml
+  - targets/*.yml            # targets extras (opcional): um arquivo por ambiente, se preferir separar
+
+variables:
+  # ------------------------------------------------------------------ onde ficam as coisas
+  catalogo:
+    description: Catálogo das tabelas operacionais do PLHDWA (log, lotes, controle). Precisa existir.
+  schema:
+    description: Schema das tabelas operacionais (criado pelo pós-deploy se não existir)
+    default: plhdwa
+  catalogos_objetos:
+    description: >-
+      Catálogos onde ficam as TABELAS DESTINO dos objetos (procuradas pela tag plhdwa_cod_objeto),
+      separados por vírgula. Vazio = o mesmo catálogo das tabelas operacionais.
+    default: ""
+  landing:
+    description: >-
+      Pasta raiz da landing, num volume do Unity Catalog (em produção, volume externo sobre o bucket S3
+      do Netezza, com file events). Subpastas raw/data, raw/ctl e error.
+  warehouse_id:
+    description: SQL warehouse dos dashboards
+  fuso_horario:
+    description: Fuso das datas de geração dos nomes de arquivo e dos horários gravados no log
+    default: America/Sao_Paulo
+
+  # ------------------------------------------------------------------ controle (Db2)
+  db2_modo:
+    description: >-
+      DB2 = controle no Db2 do cliente (padrão). SIMULADO = controle numa instância Lakebase, só para testar
+      o motor sem Db2 (nesse caso preencha as variáveis lakebase_*).
+    default: DB2
+  db2_host:
+    description: Host do Db2 (o serverless chega nele pela NCC / rota de rede do workspace)
+    default: ""
+  db2_porta:
+    description: Porta do Db2
+    default: "50000"
+  db2_banco:
+    description: Nome do banco (DATABASE) no Db2
+    default: ""
+  db2_ssl:
+    description: true = conexão com SSL (SECURITY=SSL)
+    default: "true"
+  db2_certificado:
+    description: >-
+      (opcional) arquivo da CA do certificado do Db2, num volume (ex.: /Volumes/.../config/db2_ca.arm ou .pem).
+      Necessário se o Db2 usa certificado de CA própria/interna (opção SSLServerCertificate do ibm_db).
+    default: ""
+  db2_extra:
+    description: (opcional) opções extras da conexão ibm_db, no formato CHAVE=valor;CHAVE=valor;
+    default: ""
+  db2_secret_scope:
+    description: Secret scope com o usuário e a senha do Db2 (nunca coloque senha em variável)
+    default: plhdwa
+  db2_chave_usuario:
+    description: Chave do usuário do Db2 no secret scope
+    default: db2_usuario
+  db2_chave_senha:
+    description: Chave da senha do Db2 no secret scope
+    default: db2_senha
+  db2_tabela:
+    description: schema.tabela da controle no Db2
+    default: ""
+  db2_comando:
+    description: >-
+      Arquivo em sql/ com o comando que grava a controle (14 parâmetros "?"). Padrão: layout do PLHDWA
+      (02_db2_controle_merge.sql). Para uma tabela no layout CONTROLE genérico: 02_db2_controle_merge_tabela_controle.sql
+    default: 02_db2_controle_merge.sql
+  lakebase_instance:
+    description: (só db2_modo = SIMULADO) instância Lakebase da controle simulada
+    default: ""
+  lakebase_database:
+    description: (só db2_modo = SIMULADO) banco da controle simulada no Lakebase (criado pelo pós-deploy)
+    default: plhdwa
+  lakebase_tabela:
+    description: (só db2_modo = SIMULADO) schema.tabela da controle simulada no Lakebase (criada pelo pós-deploy)
+    default: controle.db2_controle
+  db2_max_conexoes:
+    description: >-
+      Conexões simultâneas com o Db2 por processo (as threads do despachante compartilham). Total no Db2 =
+      este valor (despachante) + 1 por job independente em execução. Respeite o limite de conexões do Db2.
+    default: "8"
+  db2_tentativas:
+    description: Tentativas de gravar na controle antes de ERRO_DB2
+    default: "3"
+  db2_espera_base_s:
+    description: Espera (s) antes da 2ª tentativa na controle; dobra a cada tentativa
+    default: "30"
+
+  # ------------------------------------------------------------------ execução
+  max_simult_despachante:
+    description: >-
+      Vagas iniciais do modo DESPACHANTE (objetos em paralelo dentro do despachante). Só vale na 1ª
+      instalação; depois, o owner ajusta direto em ctl_execucao.
+    default: "24"
+  max_simult_job:
+    description: Vagas iniciais do modo JOB (jobs independentes em paralelo). Idem.
+    default: "24"
+  ciclo_s:
+    description: Segundos entre releituras da pasta, dos limites e dos jobs (a vaga liberada é preenchida na hora)
+    default: "5"
+  max_horas:
+    description: Duração máxima de um lote (segurança)
+    default: "10"
+  max_threads:
+    description: Teto físico de threads do despachante (precisa ser >= max_simult do DESPACHANTE)
+    default: "64"
+  job_max_arquivos:
+    description: O job independente segue com o mesmo objeto até N arquivos e devolve a vaga...
+    default: "20"
+  job_max_minutos:
+    description: ... ou até M minutos
+    default: "60"
+  precheck_linhas:
+    description: Linhas lidas na pré-checagem (header, tipos, detector de formato)
+    default: "10000"
+  precheck_min_mb:
+    description: A partir deste tamanho (MB), todo arquivo faz a pré-checagem completa
+    default: "256"
+  gatilho_intervalo_s:
+    description: Intervalo mínimo entre disparos do gatilho de chegada de arquivo (segundos)
+    default: "60"
+  vigia_cron:
+    description: Agenda do vigia (cron Quartz)
+    default: "0 0/15 * * * ?"
+  vigia_parado_min:
+    description: O vigia dispara o despachante se houver CTL parado há mais de N minutos
+    default: "5"
+
+  # ------------------------------------------------------------------ governança
+  owner_tag:
+    description: Valor da tag OWNER em jobs, tabelas e schema (chave fixa OWNER · pendência U1)
+    default: PLHDWA
+  grupo_owner:
+    description: Usuário/grupo dono da operação (escrita em ctl_execucao, desbloqueio). Vazio = quem fez o deploy
+    default: ""
+  email_alertas:
+    description: E-mail que recebe as falhas dos jobs
+
+targets:
+  # Modelos: troque o host e os valores <...>. Rode sempre com -t <target>.
+  # Antes do 1º deploy, crie o secret scope com o usuário/senha do Db2 (ver README, passo 2).
+  dev:
+    workspace:
+      host: https://<workspace-dev>.cloud.databricks.com
+    variables:
+      catalogo: <catalogo_dev>
+      landing: /Volumes/<catalogo_dev>/<schema>/<volume>/netezza
+      warehouse_id: <warehouse_id_dev>
+      db2_host: <host_db2_dev>
+      db2_porta: "<porta>"
+      db2_banco: <banco_db2>
+      db2_tabela: <SCHEMA>.<TABELA_CONTROLE>
+      email_alertas: <email@cliente>
+      db2_espera_base_s: "5"          # testes mais rápidos
+
+  hml:
+    workspace:
+      host: https://<workspace-hml>.cloud.databricks.com
+    variables:
+      catalogo: <catalogo_hml>
+      landing: /Volumes/<catalogo_hml>/<schema>/<volume>/netezza
+      warehouse_id: <warehouse_id_hml>
+      db2_host: <host_db2_hml>
+      db2_porta: "<porta>"
+      db2_banco: <banco_db2>
+      db2_tabela: <SCHEMA>.<TABELA_CONTROLE>
+      email_alertas: <email@cliente>
+
+  prd:
+    mode: production
+    workspace:
+      host: https://<workspace-prd>.cloud.databricks.com
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalogo: <catalogo_prd>
+      landing: /Volumes/<catalogo_prd>/<schema>/<volume_externo>/netezza
+      warehouse_id: <warehouse_id_prd>
+      db2_host: <host_db2_prd>
+      db2_porta: "<porta>"
+      db2_banco: <banco_db2>
+      db2_tabela: <SCHEMA>.<TABELA_CONTROLE>
+      grupo_owner: <grupo_owner_prd>
+      email_alertas: <email@cliente>
