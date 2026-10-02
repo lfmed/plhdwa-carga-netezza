@@ -8,3 +8,5 @@ plhdwa_bundle/targets/*.yml
 !plhdwa_bundle/targets/.gitkeep
 # saídas locais do cadastro de objetos
 plhdwa_bundle/ferramentas/cadastro/
+# logs locais de sessão (ferramentas de desenvolvimento)
+.claude*

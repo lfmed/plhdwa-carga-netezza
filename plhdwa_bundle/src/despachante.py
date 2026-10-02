@@ -74,6 +74,7 @@ threads = {}                                   # future -> (cod, arquivo) · 1 a
 lancados = {}                                  # run_id -> arquivo inicial dos jobs independentes disparados por este lote
 run_cod = {}                                   # run_id -> cod (cache: evita get_run a cada ciclo)
 em_job = {}                                    # cod -> run_id dos jobs independentes ativos
+estado_run = {}                                # run_id -> (estado no Jobs, início em epoch) · vai para log_job_ativo
 pend, tamanhos = {}, {}                        # foto da pasta (refeita a cada ciclo; entre ciclos, atualizada em memória)
 erros = 0
 execucao = None
@@ -98,7 +99,14 @@ def runs_ativos():
                     run_cod[r.run_id] = arq["cod"] if arq else None
             if run_cod[r.run_id] is not None:
                 ativos[run_cod[r.run_id]] = r.run_id
+                estado_run[r.run_id] = _estado(r)
     return ativos
+
+
+def _estado(run):
+    """(QUEUED | PENDING | RUNNING | ..., início em epoch ou None) de uma execução do Jobs."""
+    st = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else None
+    return st, (run.start_time / 1000 if run.start_time else None)
 
 
 def ciclo_completo():
@@ -115,6 +123,7 @@ def ciclo_completo():
         if run.state.life_cycle_state in (RunLifeCycleState.PENDING, RunLifeCycleState.QUEUED,
                                           RunLifeCycleState.RUNNING, RunLifeCycleState.BLOCKED):
             em_job[lancados[run_id]["cod"]] = run_id    # ainda na fila do Jobs
+            estado_run[run_id] = _estado(run)
             continue
         arq = lancados.pop(run_id)
         if run.state.result_state != RunResultState.SUCCESS:
@@ -132,7 +141,12 @@ def ciclo_completo():
         md = m.execucao_do_objeto(cod)[0]
         foto[md][0] += len(arquivos)
         foto[md][1] += sum(tamanhos.get(a["nome_dat"], 0) for a in arquivos)
-    m.ciclo([(int(P["job_run_id"]), md, foto[md][0], foto[md][1], uso[md], execucao[md]["max_simult"]) for md in m.MODOS])
+    ts = time.time()                            # mesmo horário nas duas fotos: o dashboard junta as duas pelo ciclo
+    m.ciclo([(int(P["job_run_id"]), md, foto[md][0], foto[md][1], uso[md], execucao[md]["max_simult"]) for md in m.MODOS],
+            ts=ts)
+    # lista dos jobs independentes ativos (o cartão do dashboard conta; esta foto mostra quais são)
+    m.jobs_ativos([(cod, run_id, m.execucao_do_objeto(cod)[1]) + estado_run.get(run_id, (None, None))
+                   for cod, run_id in em_job.items()], ts=ts)
 
 
 def uso_por_modo():
@@ -155,9 +169,12 @@ def despachar():
         if modo == "DESPACHANTE":
             threads[pool.submit(processar_no_despachante, prox, time.time())] = (cod, prox)
         else:
-            m.evento(prox, "ROTEADO", fila="JOB", tipo_job=tipo_job, tamanho=tamanhos.get(prox["nome_dat"], 0))
+            roteado_ts = time.time()            # horário do disparo: fica antes do INICIADO gravado pelo job
             run = w.jobs.run_now(job_id=m.job_do_tipo(execucao, tipo_job),
                                  job_parameters={"ctl": prox["ctl"], "modo": "JOB", "lote_id": P["lote_id"]})
+            # ROTEADO já com a execução do job (e não a do despachante): o dashboard liga o arquivo ao job
+            m.evento(prox, "ROTEADO", fila="JOB", tipo_job=tipo_job, tamanho=tamanhos.get(prox["nome_dat"], 0),
+                     job_run_id=run.run_id, tabela=m.tabela_do_objeto(cod), ts=roteado_ts)
             lancados[run.run_id] = prox
             run_cod[run.run_id] = cod
             em_job[cod] = run.run_id

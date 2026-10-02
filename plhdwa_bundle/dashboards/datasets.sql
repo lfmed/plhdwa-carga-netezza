@@ -50,6 +50,40 @@ FROM __PLH__.v_em_execucao e
 LEFT JOIN concluidos c ON c.lote_id = e.lote_id AND c.cod_objeto = e.cod_objeto
 ORDER BY e.modo, e.desde;
 
+-- ds: jobs_execucao
+-- Um job independente por linha, da foto do último ciclo do despachante (a mesma que o cartão conta):
+-- aparece também o job na fila do Jobs, arrancando ou entre um arquivo e outro do mesmo objeto.
+WITH ultimo AS (
+  SELECT max(ciclo_ts) AS ciclo_ts FROM __PLH__.log_ciclo_despachante
+), j AS (
+  SELECT a.* FROM __PLH__.log_job_ativo a JOIN ultimo u ON a.ciclo_ts = u.ciclo_ts
+  WHERE EXISTS (SELECT 1 FROM __PLH__.v_lote WHERE status = 'EM_ANDAMENTO')
+), feitos AS (
+  -- arquivos que esta execução já concluiu (o job segue com o mesmo objeto até max_arquivos / max_minutos)
+  -- e o último evento da execução (sem arquivo em aberto: trocando de arquivo ou encerrando, ex.: após um ERRO_*)
+  SELECT job_run_id, count(DISTINCT arquivo_ctl) FILTER (WHERE status = 'CONCLUIDO') AS arquivos_concluidos,
+         max(tabela_destino) AS tabela_destino,
+         max_by(status, evento_ts) AS ultimo_status, max_by(arquivo_ctl, evento_ts) AS ultimo_arquivo
+  FROM __PLH__.log_carga_evento
+  WHERE job_run_id IN (SELECT job_run_id FROM j) AND evento_ts >= current_timestamp() - INTERVAL 12 HOURS
+    AND status NOT IN ('ALERTA_FORMATO', 'DESBLOQUEIO')
+  GROUP BY 1
+)
+SELECT j.job_run_id, j.cod_objeto, coalesce(e.tabela_destino, f.tabela_destino) AS tabela_destino, j.tipo_job,
+       j.estado_run, j.inicio_run,
+       round((unix_timestamp(current_timestamp()) - unix_timestamp(j.inicio_run)) / 60, 1) AS minutos_rodando,
+       CASE WHEN e.estado IS NOT NULL THEN e.estado
+            WHEN f.ultimo_status = 'CONCLUIDO' THEN 'ENTRE_ARQUIVOS'
+            WHEN f.ultimo_status IS NOT NULL THEN concat(f.ultimo_status, ' · encerrando')
+            ELSE 'AGUARDANDO_INICIO' END                                  AS estado_arquivo,
+       coalesce(e.arquivo_ctl, f.ultimo_arquivo)                        AS arquivo_atual,
+       round(e.tamanho_bytes / 1048576, 1) AS mb, e.segundos AS segundos_no_arquivo,
+       coalesce(f.arquivos_concluidos, 0) AS arquivos_concluidos, j.lote_id
+FROM j
+LEFT JOIN __PLH__.v_em_execucao e ON e.cod_objeto = j.cod_objeto
+LEFT JOIN feitos f ON f.job_run_id = j.job_run_id
+ORDER BY j.inicio_run NULLS LAST, j.cod_objeto;
+
 -- ds: lotes
 SELECT lote_id, status, inicio, fim, minutos, pendentes_no_inicio, arquivos_iniciados, arquivos_concluidos,
        arquivos_com_erro, concluidos_em_job, registros

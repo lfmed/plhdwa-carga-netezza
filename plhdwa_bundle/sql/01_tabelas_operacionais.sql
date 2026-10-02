@@ -91,6 +91,22 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_ciclo_despachante (
 
 ALTER TABLE ${catalogo}.${schema}.log_ciclo_despachante SET TAGS ('OWNER' = '${owner_tag}');
 
+-- 4b) Jobs independentes ativos em cada ciclo (lidos da API de Jobs): mostra no dashboard QUAIS são, inclusive
+--     os que ainda estão na fila do Jobs, arrancando ou entre um arquivo e outro do mesmo objeto.
+--     Mesmo ciclo_ts da foto em log_ciclo_despachante.
+CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_job_ativo (
+  ciclo_ts     TIMESTAMP,
+  lote_id      BIGINT    COMMENT 'lote (execução do despachante) que viu o job ativo',
+  cod_objeto   INT,
+  job_run_id   BIGINT    COMMENT 'execução do job independente',
+  tipo_job     STRING    COMMENT 'PERFORMANCE_OPTIMIZED | STANDARD',
+  estado_run   STRING    COMMENT 'estado no Jobs: QUEUED | PENDING | RUNNING | BLOCKED',
+  inicio_run   TIMESTAMP COMMENT 'início da execução no Jobs (vazio enquanto está na fila)'
+) CLUSTER BY (ciclo_ts)
+COMMENT 'PLHDWA · jobs independentes ativos a cada ciclo do despachante';
+
+ALTER TABLE ${catalogo}.${schema}.log_job_ativo SET TAGS ('OWNER' = '${owner_tag}');
+
 -- 5) Histórico da controle (Db2 simulado): 1 linha por mudança de status de cada arquivo.
 --    O estado atual fica no Lakebase (parâmetros lakebase_*); no Db2 real, fica no Db2.
 CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.db2_controle_sim (
@@ -196,7 +212,7 @@ SELECT arquivo_ctl,
        max_by(fila, evento_ts)                               AS modo,
        max_by(tipo_job, evento_ts)                           AS tipo_job,
        max(lote_id)                                          AS lote_id,
-       max(job_run_id)                                       AS job_run_id,
+       max_by(job_run_id, evento_ts)                         AS job_run_id,
        max(tamanho_bytes)                                    AS tamanho_bytes,
        max(evento_ts)                                        AS desde,
        unix_timestamp(current_timestamp()) - unix_timestamp(max(evento_ts)) AS segundos

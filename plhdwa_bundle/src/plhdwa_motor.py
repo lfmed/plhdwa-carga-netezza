@@ -154,7 +154,8 @@ _SCHEMA_EVENTO = ("ts_s DOUBLE, job_id BIGINT, job_run_id BIGINT, lote_id BIGINT
 def _linha_evento(arq, status, c):
     return {
         "ts_s": c.get("ts"),                        # horário real da etapa (None = agora)
-        "job_id": CTX["job_id"], "job_run_id": CTX["job_run_id"], "lote_id": CTX["lote_id"],
+        "job_id": CTX["job_id"], "lote_id": CTX["lote_id"],
+        "job_run_id": c.get("job_run_id") or CTX["job_run_id"],   # ROTEADO de job: a execução disparada
         "fila": c.get("fila"), "tipo_job": c.get("tipo_job"),          # fila = modo de execução
         "cod_objeto": arq.get("cod") if arq else c.get("cod"),
         "tabela_destino": c.get("tabela"),
@@ -194,14 +195,31 @@ def evento(arq, status, **c):
     eventos([(arq, status, c)])
 
 
-def ciclo(linhas):
+def _horario_ciclo(ts):
+    return F.timestamp_seconds(F.lit(ts)) if ts else F.current_timestamp()
+
+
+def ciclo(linhas, ts=None):
     """Foto do backlog por modo de execução em cada ciclo do despachante (alimenta o dashboard)."""
     if not linhas:
         return
     df = CTX["spark"].createDataFrame(
         linhas, "job_run_id BIGINT, fila STRING, pendentes_qtd INT, pendentes_bytes BIGINT, em_andamento INT, max_simult INT")
-    (df.select(F.current_timestamp().alias("ciclo_ts"), "*").write.mode("append")
+    (df.select(_horario_ciclo(ts).alias("ciclo_ts"), "*").write.mode("append")
        .saveAsTable(fq("log_ciclo_despachante")))
+
+
+def jobs_ativos(linhas, ts=None):
+    """Foto dos jobs independentes ativos no ciclo: [(cod, run_id, tipo_job, estado_run, inicio_epoch), ...].
+    Mesmo ciclo_ts da foto de log_ciclo_despachante (o cartão conta; esta tabela lista)."""
+    if not linhas:
+        return
+    df = CTX["spark"].createDataFrame(
+        [(int(CTX["lote_id"]), c, r, t, e, i) for c, r, t, e, i in linhas],
+        "lote_id BIGINT, cod_objeto INT, job_run_id BIGINT, tipo_job STRING, estado_run STRING, inicio_s DOUBLE")
+    (df.select(_horario_ciclo(ts).alias("ciclo_ts"), "lote_id", "cod_objeto", "job_run_id", "tipo_job", "estado_run",
+               F.timestamp_seconds("inicio_s").alias("inicio_run"))
+       .write.mode("append").saveAsTable(fq("log_job_ativo")))
 
 
 def lote(status, pendentes=None, mensagem=None):
@@ -338,6 +356,12 @@ def mapa_objetos(validade_s=60):
     with _trava_cache:
         _mapa.update(quando=time.time(), objetos=objetos)
     return objetos
+
+
+def tabela_do_objeto(cod):
+    """Tabela destino do objeto (None se não houver exatamente uma cadastrada)."""
+    tabelas = mapa_objetos().get(cod, {}).get("tabelas", [])
+    return tabelas[0] if len(tabelas) == 1 else None
 
 
 def execucao_do_objeto(cod):

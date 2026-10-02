@@ -195,6 +195,7 @@
     <tr><td>9</td><td>A controle no cliente é o Db2: não provisionar Lakebase</td><td><code>db2_modo = DB2</code>, driver Python <code>ibm_db</code>, usuário/senha em secret scope, comando editável pelo DBA; Lakebase só para testes sem Db2</td></tr>
     <tr><td>10</td><td>Dashboard com card de objetos em execução</td><td>Card “Objetos em execução” + tabela com 1 linha por objeto (arquivo atual, modo, há quanto tempo, concluídos no lote)</td></tr>
     <tr><td>11</td><td>Bundle para o cliente, comentado e parametrizável (catálogo dos objetos e tudo)</td><td>Variáveis com descrição, targets dev/hml/prd, instalação pelo pós-deploy, pacote de entrega (seção 18)</td></tr>
+    <tr><td>12</td><td>Detalhe do dashboard lista os jobs em processamento</td><td>Tabela “Jobs independentes em execução” (1 linha por job: execução, objeto, estado no Jobs, minutos rodando, arquivo atual, arquivos concluídos no job). Vem da foto <code>log_job_ativo</code>, gravada a cada ciclo do despachante com o mesmo horário do cartão: o job aparece também na fila do Jobs, arrancando e entre um arquivo e outro. O evento <code>ROTEADO</code> do job passou a levar a execução do job e a tabela destino</td></tr>
   </table>
   <div class="callout">Manual de operação, cadastro de novos arquivos e o cenário “1 arquivo → +10 → +300” ilustrado: <code>manual_operacao_plhdwa.html</code>.</div>
 </section>
