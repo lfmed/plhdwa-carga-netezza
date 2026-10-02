@@ -199,6 +199,7 @@
     <tr><td>13</td><td>Driver do Db2 vem no environment do job (serverless)</td><td>Environment <code>plhdwa</code> em todos os jobs (<code>ibm-db</code>, <code>databricks-sdk</code>, <code>pg8000</code>), sem <code>pip install</code> nos notebooks; versão do ambiente fixa em 1 (<code>serverless_ambiente</code>). Testada a versão mais nova (6) com <code>ibm-db</code>: 3 de 3 jobs falharam na instalação (máquina ARM); na versão 1, 14/14 em dois lotes</td></tr>
   </table>
   <div class="callout">Manual de operação, cadastro de novos arquivos e o cenário “1 arquivo → +10 → +300” ilustrado: <code>manual_operacao_plhdwa.html</code>.</div>
+  <div class="callout">Cada notebook e função do ingestor, e a prova de que a carga FATO troca só a data (ou a data + instituições do CTL) e a DIM troca tudo: <code>documentacao_tecnica_plhdwa.html</code>.</div>
 </section>
 
 <!-- 2 -->
@@ -819,6 +820,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
   <table>
     <tr><th>Artefato</th><th>Para quê</th><th>Situação</th></tr>
     <tr><td><code>manual_operacao_plhdwa.html</code></td><td>Manual de operação e cadastro, com o cenário 1 → 10 → 300 ilustrado e o lote grande real</td><td><span class="pill p-ok">Versão final</span></td></tr>
+    <tr><td><code>documentacao_tecnica_plhdwa.html</code></td><td>Documentação técnica: todos os notebooks, funções (o que faz, entrada, saída, efeitos, erros, quem chama), parâmetros, variáveis, jobs, tabelas e visões, e a prova de carga FATO/DIM com dados (esperado × obtido). Gerada do código por <code>scripts/gerar_doc_tecnica.py</code></td><td><span class="pill p-ok">Versão final</span></td></tr>
     <tr><td><code>plhdwa_bundle/</code></td><td>Motor implementado e parametrizado (jobs, biblioteca, SQL de instalação, Db2, dashboards, ferramentas)</td><td><span class="pill p-ok">Implantado no workspace</span></td></tr>
     <tr><td><code>entrega/plhdwa_bundle_&lt;data&gt;.zip</code></td><td>Pacote para o cliente, gerado por <code>scripts/exportar_entrega.sh</code> (seção 18)</td><td><span class="pill p-ok">Pronto</span></td></tr>
     <tr><td><code>sql/13_execucao_lotes_controle.sql</code></td><td><code>ctl_execucao</code>, <code>log_lote</code>, visões <code>v_lote</code> e <code>v_em_execucao</code>, colunas novas da controle</td><td><span class="pill p-ok">Aplicado</span></td></tr>

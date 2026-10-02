@@ -6,7 +6,7 @@ controle de cada arquivo (início, erro, conclusão) gravada no Db2. Entregue co
 | Pasta | Conteúdo |
 |---|---|
 | [`plhdwa_bundle/`](plhdwa_bundle/) | O bundle: jobs, biblioteca do motor, SQL de instalação, comando da controle no Db2, dashboards e ferramentas de cadastro. **Comece pelo [`plhdwa_bundle/README.md`](plhdwa_bundle/README.md)** (pré-requisitos, variáveis, instalação, cadastro, testes). |
-| [`docs/`](docs/) | Especificação (`documentacao_carga_netezza_databricks.html`) e manual de operação (`manual_operacao_plhdwa.html`), com diagramas. Baixe e abra no navegador. |
+| [`docs/`](docs/) | Especificação (`documentacao_carga_netezza_databricks.html`), manual de operação (`manual_operacao_plhdwa.html`) e documentação técnica de todos os notebooks e funções, com a prova de carga (`documentacao_tecnica_plhdwa.html`). Baixe e abra no navegador. |
 
 Instalação, em resumo:
 
