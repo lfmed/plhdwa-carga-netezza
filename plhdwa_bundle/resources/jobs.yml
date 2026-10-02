@@ -53,9 +53,22 @@ resources:
         - {name: max_horas, default: "${var.max_horas}"}
         - {name: max_threads, default: "${var.max_threads}"}
         - {name: tipo_job, default: PERFORMANCE_OPTIMIZED}
+      # Ambiente serverless dos notebooks: dependências instaladas antes de o notebook começar e versão FIXA.
+      # O driver do Db2 (ibm_db) só existe para x86_64; no serverless a arquitetura acompanha a versão do
+      # ambiente (versão 1 = x86_64; 2, 3 e 4 = aarch64, medido no workspace de testes). Sem fixar, o job pode
+      # cair numa máquina ARM e terminar em ERRO_DB2. Ver a variável serverless_ambiente e o README.
+      environments: &ambiente_plhdwa
+        - environment_key: plhdwa
+          spec:
+            environment_version: "${var.serverless_ambiente}"
+            dependencies:
+              - "ibm_db>=3.2"           # controle no Db2
+              - "databricks-sdk>=0.65"  # Jobs / Lakebase
+              - "pg8000>=1.31"          # controle simulada no Lakebase (db2_modo = SIMULADO)
       tasks:
         - task_key: despachar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/despachante.py
             base_parameters: {job_id: "{{job.id}}", job_run_id: "{{job.run_id}}"}
@@ -102,9 +115,11 @@ resources:
         - {name: db2_espera_base_s, default: "${var.db2_espera_base_s}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: carregar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/carga_arquivo.py
             base_parameters: {job_id: "{{job.id}}", job_run_id: "{{job.run_id}}", tipo_job: PERFORMANCE_OPTIMIZED}
@@ -119,9 +134,11 @@ resources:
       email_notifications:
         on_failure: ["${var.email_alertas}"]
       parameters: *parametros_carga
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: carregar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/carga_arquivo.py
             base_parameters: {job_id: "{{job.id}}", job_run_id: "{{job.run_id}}", tipo_job: STANDARD}
@@ -146,9 +163,11 @@ resources:
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: vigia_parado_min, default: "${var.vigia_parado_min}"}
         - {name: despachante_job_id, default: "${resources.jobs.plhdwa_despachante.id}"}
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: vigiar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/vigia.py
 
@@ -158,9 +177,11 @@ resources:
     plhdwa_pos_deploy:
       name: PLHDWA · instalação e pós-deploy
       tags: {OWNER: "${var.owner_tag}"}
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: pos_deploy
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/pos_deploy.py
             base_parameters:
@@ -205,9 +226,11 @@ resources:
         - {name: lakebase_instance, default: "${var.lakebase_instance}"}
         - {name: lakebase_database, default: "${var.lakebase_database}"}
         - {name: lakebase_tabela, default: "${var.lakebase_tabela}"}
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: validar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/validar_testes.py
 
@@ -236,9 +259,11 @@ resources:
         - {name: db2_tabela, default: "${var.db2_tabela}"}
         - {name: db2_comando, default: "${var.db2_comando}"}
         - {name: db2_max_conexoes, default: "${var.db2_max_conexoes}"}
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: testar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/testar_controle_db2.py
 
@@ -249,8 +274,10 @@ resources:
         - {name: landing, default: "${var.landing}"}
         - {name: tamanho_mb, default: "5120"}
         - {name: cod_objeto, default: "9050"}
+      environments: *ambiente_plhdwa
       tasks:
         - task_key: gerar
           max_retries: 0
+          environment_key: plhdwa
           notebook_task:
             notebook_path: ../src/gerar_teste_tempo.py

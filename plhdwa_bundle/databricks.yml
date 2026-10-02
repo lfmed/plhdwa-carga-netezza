@@ -109,6 +109,13 @@ variables:
   max_simult_job:
     description: Vagas iniciais do modo JOB (jobs independentes em paralelo). Idem.
     default: "24"
+  serverless_ambiente:
+    description: >-
+      Versão do ambiente serverless dos jobs (environment_version). Fica em "1" porque o driver do Db2 (ibm_db)
+      só existe para x86_64 e, no serverless, as versões 2, 3 e 4 rodam em ARM (aarch64). Só mude se a IBM
+      passar a publicar o ibm_db para Linux ARM ou se o workspace mostrar x86_64 na versão escolhida
+      (job "PLHDWA · testar controle Db2" imprime a arquitetura).
+    default: "1"
   ciclo_s:
     description: Segundos entre releituras da pasta, dos limites e dos jobs (a vaga liberada é preenchida na hora)
     default: "5"

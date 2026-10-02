@@ -116,10 +116,14 @@ O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o m
   da carga, os dados ficam no Delta e, após o DESBLOQUEIO, só a conclusão é refeita.
 - Certificado: Db2 com certificado de CA própria → coloque a CA num volume e informe em `db2_certificado`.
 - Horários (`DT_INICIO`, `DT_FIM`) vão no fuso de `fuso_horario`.
-- **Atenção (arquitetura):** o pacote `ibm_db` só existe para máquinas **x86_64**. Se o serverless alocar uma
-  máquina ARM, a gravação na controle falha com a mensagem "driver ibm_db indisponível nesta máquina (aarch64)":
-  o arquivo fica em `ERRO_DB2`, nada é carregado e o DESBLOQUEIO reprocessa. Nos testes, isso aconteceu 1 vez,
-  e a plataforma refez a tarefa sozinha numa máquina x86.
+- **Driver e arquitetura:** o `ibm_db` não é Python puro (traz o driver CLI nativo da IBM) e só tem pacote
+  para **x86_64**; em ARM (aarch64) a instalação falha. No serverless, a arquitetura acompanha a **versão do
+  ambiente**: medido no workspace de testes, versão 1 = x86_64 e versões 2, 3 e 4 = aarch64. Por isso todos os
+  jobs usam o environment `plhdwa` (`resources/jobs.yml`): `ibm_db`, `databricks-sdk` e `pg8000` instalados
+  antes de o notebook começar, com a versão fixa na variável `serverless_ambiente` (padrão `"1"`). O job
+  `plhdwa_testar_controle_db2` imprime a máquina (`x86_64` esperado). Se mesmo assim cair em ARM, a gravação na
+  controle falha com "driver ibm_db indisponível nesta máquina (aarch64)": `ERRO_DB2`, nada é carregado e o
+  DESBLOQUEIO reprocessa.
 
 ## 7. Testar
 

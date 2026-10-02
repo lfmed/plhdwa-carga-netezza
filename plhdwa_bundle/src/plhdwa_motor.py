@@ -704,9 +704,10 @@ def _conexao_db2():
     try:
         import ibm_db_dbi
     except ImportError as e:
-        # ibm_db só tem pacote para máquinas x86_64; se o serverless subir em ARM, a instalação falha
+        # ibm_db só tem pacote para máquinas x86_64; no serverless a arquitetura acompanha a versão do ambiente
         import platform
-        raise RuntimeError(f"driver ibm_db indisponível nesta máquina ({platform.machine()}): {e}") from e
+        raise RuntimeError(f"driver ibm_db indisponível nesta máquina ({platform.machine()}): {e} · confira o "
+                           "environment do job (dependência ibm_db e serverless_ambiente = versão em x86_64)") from e
     sec = CTX["dbutils"].secrets
     dsn = (f"DATABASE={CTX['db2_banco']};HOSTNAME={CTX['db2_host']};PORT={CTX['db2_porta']};PROTOCOL=TCPIP;"
            f"UID={sec.get(CTX['db2_secret_scope'], CTX['db2_chave_usuario'])};"

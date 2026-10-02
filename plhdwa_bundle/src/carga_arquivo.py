@@ -10,18 +10,9 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -q "databricks-sdk>=0.65" "pg8000>=1.31"
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
-
-# COMMAND ----------
-
-# Driver do Db2 (ibm_db). Instalado à parte para não derrubar o notebook se a máquina não suportar (ARM):
-# nesse caso só a gravação na controle falha, com mensagem clara (ver _conexao_db2 em plhdwa_motor.py).
-import subprocess, sys
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "ibm_db>=3.2"], capture_output=True)
+# Dependências (ibm_db, databricks-sdk, pg8000): vêm do environment do job (resources/jobs.yml, environments ->
+# plhdwa) e são instaladas antes de o notebook começar. A versão do ambiente fica fixa (variável
+# serverless_ambiente) porque o driver ibm_db só existe para x86_64 (ver README, seção do Db2).
 
 # COMMAND ----------
 
