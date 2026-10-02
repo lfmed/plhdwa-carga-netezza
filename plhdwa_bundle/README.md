@@ -116,14 +116,14 @@ O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o m
   da carga, os dados ficam no Delta e, após o DESBLOQUEIO, só a conclusão é refeita.
 - Certificado: Db2 com certificado de CA própria → coloque a CA num volume e informe em `db2_certificado`.
 - Horários (`DT_INICIO`, `DT_FIM`) vão no fuso de `fuso_horario`.
-- **Driver e arquitetura:** o `ibm_db` não é Python puro (traz o driver CLI nativo da IBM) e só tem pacote
-  para **x86_64**; em ARM (aarch64) a instalação falha. No serverless, a arquitetura acompanha a **versão do
-  ambiente**: medido no workspace de testes, versão 1 = x86_64 e versões 2, 3 e 4 = aarch64. Por isso todos os
-  jobs usam o environment `plhdwa` (`resources/jobs.yml`): `ibm_db`, `databricks-sdk` e `pg8000` instalados
-  antes de o notebook começar, com a versão fixa na variável `serverless_ambiente` (padrão `"1"`). O job
-  `plhdwa_testar_controle_db2` imprime a máquina (`x86_64` esperado). Se mesmo assim cair em ARM, a gravação na
-  controle falha com "driver ibm_db indisponível nesta máquina (aarch64)": `ERRO_DB2`, nada é carregado e o
-  DESBLOQUEIO reprocessa.
+- **Driver e arquitetura:** o driver do Db2 entra como dependência `ibm-db` do environment `plhdwa`
+  (`resources/jobs.yml`), instalado antes de o notebook começar. Ele não é Python puro (traz o driver CLI nativo
+  da IBM) e só tem pacote para **x86_64**: em máquina ARM (aarch64) a instalação falha e o job termina antes de
+  processar ("Unexpected error during library installation"). Nas versões mais novas do ambiente serverless a
+  plataforma às vezes aloca ARM (teste com a versão 6: 3 de 3 jobs independentes falharam); na versão 1, todas
+  as execuções medidas rodaram em x86_64 (2 lotes de 14 arquivos em job independente, 14/14 nos dois). Por isso
+  a variável `serverless_ambiente` fica em `"1"`. O job `plhdwa_testar_controle_db2` imprime a máquina
+  (`x86_64` esperado). Se um job falhar assim, o objeto fica travado (`ERRO_EXECUCAO`) e o DESBLOQUEIO reprocessa.
 
 ## 7. Testar
 

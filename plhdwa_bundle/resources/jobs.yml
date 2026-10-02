@@ -53,16 +53,15 @@ resources:
         - {name: max_horas, default: "${var.max_horas}"}
         - {name: max_threads, default: "${var.max_threads}"}
         - {name: tipo_job, default: PERFORMANCE_OPTIMIZED}
-      # Ambiente serverless dos notebooks: dependências instaladas antes de o notebook começar e versão FIXA.
-      # O driver do Db2 (ibm_db) só existe para x86_64; no serverless a arquitetura acompanha a versão do
-      # ambiente (versão 1 = x86_64; 2, 3 e 4 = aarch64, medido no workspace de testes). Sem fixar, o job pode
-      # cair numa máquina ARM e terminar em ERRO_DB2. Ver a variável serverless_ambiente e o README.
+      # Ambiente serverless dos notebooks: dependências instaladas antes de o notebook começar (sem pip no código).
+      # Versão FIXA na variável serverless_ambiente (padrão "1"): o driver do Db2 (ibm-db) só tem pacote para
+      # x86_64 e, nas versões mais novas, o job às vezes cai em máquina ARM e falha na instalação.
       environments: &ambiente_plhdwa
         - environment_key: plhdwa
           spec:
             environment_version: "${var.serverless_ambiente}"
             dependencies:
-              - "ibm_db>=3.2"           # controle no Db2
+              - "ibm-db"                # controle no Db2 (driver oficial da IBM)
               - "databricks-sdk>=0.65"  # Jobs / Lakebase
               - "pg8000>=1.31"          # controle simulada no Lakebase (db2_modo = SIMULADO)
       tasks:

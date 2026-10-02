@@ -111,10 +111,11 @@ variables:
     default: "24"
   serverless_ambiente:
     description: >-
-      Versão do ambiente serverless dos jobs (environment_version). Fica em "1" porque o driver do Db2 (ibm_db)
-      só existe para x86_64 e, no serverless, as versões 2, 3 e 4 rodam em ARM (aarch64). Só mude se a IBM
-      passar a publicar o ibm_db para Linux ARM ou se o workspace mostrar x86_64 na versão escolhida
-      (job "PLHDWA · testar controle Db2" imprime a arquitetura).
+      Versão do ambiente serverless dos jobs (environment_version). Fixa em "1": o driver do Db2 (ibm-db) só tem
+      pacote para x86_64, e nas versões mais novas a plataforma às vezes aloca máquina ARM (aarch64), onde a
+      instalação falha e o job termina antes de processar ("Unexpected error during library installation").
+      Na versão 1, todas as execuções medidas rodaram em x86_64. O job "PLHDWA · testar controle Db2" mostra a
+      máquina e se o driver carregou.
     default: "1"
   ciclo_s:
     description: Segundos entre releituras da pasta, dos limites e dos jobs (a vaga liberada é preenchida na hora)

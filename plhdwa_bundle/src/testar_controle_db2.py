@@ -12,9 +12,8 @@
 
 # COMMAND ----------
 
-# Dependências (ibm_db, databricks-sdk, pg8000): vêm do environment do job (resources/jobs.yml, environments ->
-# plhdwa) e são instaladas antes de o notebook começar. A versão do ambiente fica fixa (variável
-# serverless_ambiente) porque o driver ibm_db só existe para x86_64 (ver README, seção do Db2).
+# Dependências (ibm-db, databricks-sdk, pg8000): vêm do environment do job (resources/jobs.yml, environments ->
+# plhdwa) e são instaladas antes de o notebook começar. Versão do ambiente: variável serverless_ambiente.
 
 # COMMAND ----------
 
@@ -25,7 +24,7 @@ import time
 
 import plhdwa_motor as m
 
-# o ibm_db só existe para x86_64: se aparecer aarch64 aqui, ajuste a variável serverless_ambiente
+# máquina e Python em que o job rodou (o driver ibm-db vem do environment do job)
 print(f"máquina {platform.machine()} · Python {sys.version.split()[0]}")
 
 P = m.ler_parametros(dbutils, m.COMUNS)
