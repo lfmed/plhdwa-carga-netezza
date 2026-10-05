@@ -1715,7 +1715,7 @@
        },
        "frame": {
         "showTitle": true,
-        "title": "Controle (Db2 simulado): EM_PROCESSAMENTO · ERRO · CONCLUIDO por arquivo"
+        "title": "Controle (histórico): CONCLUIDO · ERRO por arquivo (EM_PROCESSAMENTO se db2_registrar_inicio)"
        }
       }
      },

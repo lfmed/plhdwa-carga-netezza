@@ -5,9 +5,9 @@
 # MAGIC 1. conecta no Db2 com as variáveis `db2_*` e o usuário/senha do secret scope;
 # MAGIC 2. confere se a tabela `db2_tabela` existe; com `criar_tabela = true`, cria a partir de
 # MAGIC    `sql/02_db2_controle_ddl.sql` (só para o layout padrão);
-# MAGIC 3. com `gravar_teste = true`, grava um arquivo fictício (objeto 0) passando por EM_PROCESSAMENTO -> CONCLUIDO
-# MAGIC    e outro por EM_PROCESSAMENTO -> ERRO, usando o MESMO comando do motor (`db2_comando`), mostra as linhas e,
-# MAGIC    com `apagar_teste = true`, apaga as linhas de teste no fim.
+# MAGIC 3. com `gravar_teste = true`, grava um arquivo fictício (objeto 0) que termina CONCLUIDO e outro que termina
+# MAGIC    ERRO, do jeito que o motor grava (com `db2_registrar_inicio = true`, passam antes por EM_PROCESSAMENTO),
+# MAGIC    usando o MESMO comando do motor (`db2_comando`); mostra as linhas e, com `apagar_teste = true`, apaga no fim.
 # MAGIC Falha a execução se algo não funcionar, com a mensagem do Db2.
 
 # COMMAND ----------
@@ -74,11 +74,16 @@ if P["gravar_teste"]:
     arquivos = [m.ler_nome(f"0_PLHDWA_TESTE_CONCLUIDO_20000101_{agora}.CTL"),
                 m.ler_nome(f"0_PLHDWA_TESTE_ERRO_20000102_{agora}.CTL")]
     inicio = time.time()
-    m._gravar_db2(arquivos[0], "EM_PROCESSAMENTO", "0", "DESPACHANTE", None, inicio, None, None)
+    # mesma sequência do motor: o início só vai para o Db2 com db2_registrar_inicio = true
+    com_inicio = str(m.CTX["db2_registrar_inicio"]).lower() == "true"
+    if com_inicio:
+        m._gravar_db2(arquivos[0], "EM_PROCESSAMENTO", "0", "DESPACHANTE", None, inicio, None, None)
     m._gravar_db2(arquivos[0], "CONCLUIDO", "0", "DESPACHANTE", 123, inicio, time.time(), None)
-    m._gravar_db2(arquivos[1], "EM_PROCESSAMENTO", "0", "JOB", None, inicio, None, None)
+    if com_inicio:
+        m._gravar_db2(arquivos[1], "EM_PROCESSAMENTO", "0", "JOB", None, inicio, None, None)
     m._gravar_db2(arquivos[1], "ERRO", "0", "JOB", None, inicio, time.time(), "ERRO_DADOS: teste de gravação do motor")
-    print(f"4 gravações em {time.time() - inicio:.1f} s com o comando {m.CTX['db2_comando']}")
+    print(f"{4 if com_inicio else 2} gravações em {time.time() - inicio:.1f} s com o comando {m.CTX['db2_comando']} "
+          f"(db2_registrar_inicio = {m.CTX['db2_registrar_inicio']})")
 
     # Mostra as linhas de teste. O nome do CTL fica em ARQUIVO (layout padrão) ou NOME_JOB (layout CONTROLE).
     nomes = tuple(a["nome_ctl"] for a in arquivos)
@@ -95,7 +100,8 @@ if P["gravar_teste"]:
     status = sorted(str(l).upper() for l in linhas)
     if len(linhas) != 2 or not any("CONCLUIDO" in s for s in status) or not any("ERRO" in s for s in status):
         raise Exception(f"esperado 2 linhas (1 CONCLUIDO e 1 ERRO), veio: {linhas}")
-    print("controle OK: 1 linha por arquivo, atualizada de EM_PROCESSAMENTO para CONCLUIDO / ERRO")
+    print("controle OK: 1 linha por arquivo, com o fim (CONCLUIDO / ERRO)"
+          + (", depois do EM_PROCESSAMENTO" if com_inicio else ""))
 
     if P["apagar_teste"]:
         with m.conexao_db2() as con:

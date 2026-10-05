@@ -99,6 +99,12 @@ variables:
   db2_espera_base_s:
     description: Espera (s) antes da 2ª tentativa na controle; dobra a cada tentativa
     default: "30"
+  db2_registrar_inicio:
+    description: >-
+      "false" (padrão) = o Db2 só recebe o fim de cada arquivo (CONCLUIDO ou ERRO); o início fica no log
+      do Databricks. "true" = grava também EM_PROCESSAMENTO antes da carga, e o arquivo só é carregado se o Db2
+      aceitar (com o Db2 fora, nada é carregado).
+    default: "false"
 
   # ------------------------------------------------------------------ execução
   max_simult_despachante:

@@ -10,7 +10,8 @@
 --    4 data_geracao     TIMESTAMP (texto aaaa-mm-dd hh:mm:ss, convertido pelo CAST)     11 modo_execucao          VARCHAR  (DESPACHANTE | JOB)
 --    5 instituicoes     VARCHAR       12 dt_inicio              TIMESTAMP
 --    6 status           VARCHAR       13 dt_fim                 TIMESTAMP (vazio no EM_PROCESSAMENTO)
---      (EM_PROCESSAMENTO | ERRO | CONCLUIDO)                    14 mensagem   VARCHAR (só no ERRO)
+--      (CONCLUIDO | ERRO; EM_PROCESSAMENTO só com               14 mensagem   VARCHAR (só no ERRO)
+--       db2_registrar_inicio = true)
 --    7 qtd_registros    BIGINT (só no CONCLUIDO)
 -- Um comando só (sem ";" no fim). Se a controle do cliente tiver outro layout, ajuste aqui.
 -- =====================================================================================

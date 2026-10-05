@@ -47,6 +47,7 @@ resources:
         - {name: lakebase_tabela, default: "${var.lakebase_tabela}"}
         - {name: db2_tentativas, default: "${var.db2_tentativas}"}
         - {name: db2_espera_base_s, default: "${var.db2_espera_base_s}"}
+        - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
         - {name: ciclo_s, default: "${var.ciclo_s}"}
@@ -112,6 +113,7 @@ resources:
         - {name: lakebase_tabela, default: "${var.lakebase_tabela}"}
         - {name: db2_tentativas, default: "${var.db2_tentativas}"}
         - {name: db2_espera_base_s, default: "${var.db2_espera_base_s}"}
+        - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
       environments: *ambiente_plhdwa
@@ -258,6 +260,7 @@ resources:
         - {name: db2_tabela, default: "${var.db2_tabela}"}
         - {name: db2_comando, default: "${var.db2_comando}"}
         - {name: db2_max_conexoes, default: "${var.db2_max_conexoes}"}
+        - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
       environments: *ambiente_plhdwa
       tasks:
         - task_key: testar

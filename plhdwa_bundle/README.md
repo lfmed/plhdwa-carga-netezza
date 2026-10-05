@@ -2,8 +2,9 @@
 
 O Netezza grava um `.dat` e depois um `.CTL` num volume (bucket S3). A chegada do CTL dispara o **despachante**:
 cada execução dele é um **lote**. Cada arquivo é validado, carregado num único commit Delta na tabela destino
-(REPLACE WHERE na FATO, substituição total na DIM) e registra na **controle do Db2** o início
-(`EM_PROCESSAMENTO`), o erro (`ERRO`, com a mensagem) ou a conclusão (`CONCLUIDO`, com a quantidade).
+(REPLACE WHERE na FATO, substituição total na DIM) e registra na **controle do Db2** o fim:
+a conclusão (`CONCLUIDO`, com a quantidade) ou o erro (`ERRO`, com a mensagem). O início fica no log do Databricks
+(com `db2_registrar_inicio = true`, o Db2 recebe também o início, `EM_PROCESSAMENTO`).
 Tudo é serverless, parametrizado por variáveis do bundle e leva a tag `OWNER`.
 
 Documentação funcional: `documentacao_carga_netezza_databricks.html` · Operação: `manual_operacao_plhdwa.html`.
@@ -112,8 +113,12 @@ O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o m
   - `02_db2_controle_merge.sql` (padrão): 1 linha por arquivo, chave objeto + data de movimento + data de geração.
   - `02_db2_controle_merge_tabela_controle.sql`: tabela `CONTROLE` (`ID_CONTROLE`, `NOME_JOB`, `STATUS` em
     INICIADO/EXECUTANDO/CONCLUIDO/ERRO, `DT_INICIO`, `DT_FIM`, `MENSAGEM_ERRO`).
-- Sem o `EM_PROCESSAMENTO` gravado, o arquivo **não é carregado** (`ERRO_DB2`). Se a conclusão falhar depois
-  da carga, os dados ficam no Delta e, após o DESBLOQUEIO, só a conclusão é refeita.
+- **O que vai para o Db2** (variável `db2_registrar_inicio`):
+  - `false` (padrão): só o fim, `CONCLUIDO` ou `ERRO`. A carga não depende do Db2 para começar. Se o Db2 estiver
+    fora, o arquivo é carregado e só a conclusão falha (`ERRO_DB2`, objeto travado): os arquivos ficam em `raw/` e,
+    após o DESBLOQUEIO, a retomada refaz só a conclusão, sem carregar de novo.
+  - `true`: grava também `EM_PROCESSAMENTO` antes da carga; sem ele gravado, o arquivo **não é carregado**
+    (`ERRO_DB2`): com o Db2 fora, nada entra no Delta.
 - Certificado: Db2 com certificado de CA própria → coloque a CA num volume e informe em `db2_certificado`.
 - Horários (`DT_INICIO`, `DT_FIM`) vão no fuso de `fuso_horario`.
 - **Driver e arquitetura:** o driver do Db2 entra como dependência `ibm-db` do environment `plhdwa`

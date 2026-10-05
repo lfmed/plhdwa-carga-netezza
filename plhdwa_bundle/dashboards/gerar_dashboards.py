@@ -162,7 +162,7 @@ def dash_execucao(ds):
                                      ("modo_execucao", "Modo"), ("qtd_registros", "Registros"), ("dt_inicio", "Início"),
                                      ("dt_fim", "Fim"), ("lote_id", "Lote"), ("arquivo", "Arquivo"),
                                      ("mensagem", "Mensagem")],
-               "Controle (Db2 simulado): EM_PROCESSAMENTO · ERRO · CONCLUIDO por arquivo", 18, 8),
+               "Controle (histórico): CONCLUIDO · ERRO por arquivo (EM_PROCESSAMENTO se db2_registrar_inicio)", 18, 8),
     ])
     desemp = pagina("desempenho", "Desempenho", [
         texto("h_des", "## Desempenho por modo e tipo de job", 0, 0),

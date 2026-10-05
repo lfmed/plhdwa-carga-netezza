@@ -1,8 +1,8 @@
 -- =====================================================================================
 -- PLHDWA · tabela da controle no Db2 (para o DBA do cliente criar, uma vez)
 --
--- O motor grava 1 linha por arquivo e atualiza a mesma linha a cada mudança de status:
---   EM_PROCESSAMENTO (antes da carga) -> CONCLUIDO (com a quantidade de registros) | ERRO (com a mensagem)
+-- O motor grava 1 linha por arquivo, no fim: CONCLUIDO (com a quantidade de registros) | ERRO (com a mensagem).
+-- Com a variável db2_registrar_inicio = true, a linha nasce antes da carga como EM_PROCESSAMENTO e é atualizada.
 -- Chave: objeto + data de movimento + data de geração (é o que identifica um arquivo do Netezza).
 --
 -- {tabela} = variável db2_tabela do bundle (schema.tabela). O job "PLHDWA · testar controle Db2" pode criar

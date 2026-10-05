@@ -7,6 +7,7 @@
 -- Cada arquivo vira 1 linha, identificada pelo nome do CTL em NOME_JOB (o nome já traz objeto, data de
 -- movimento e data de geração). Status do motor -> status da tabela:
 --   EM_PROCESSAMENTO -> EXECUTANDO · CONCLUIDO -> CONCLUIDO · ERRO -> ERRO
+-- Padrão (db2_registrar_inicio = false): a linha nasce já no fim (CONCLUIDO ou ERRO), com DT_INICIO e DT_FIM.
 -- Esta tabela não tem colunas para quantidade de registros, lote e modo: esses dados continuam no
 -- histórico Delta (db2_controle_sim) e no log (log_carga_evento).
 -- Os 14 parâmetros "?" chegam na mesma ordem descrita em 02_db2_controle_merge.sql.

@@ -94,7 +94,7 @@ if P["db2_modo"] == "SIMULADO":
                       data_movimento INTEGER       NOT NULL,          -- yyyyMMdd, como no CTL
                       data_geracao   TIMESTAMP     NOT NULL,          -- do nome do arquivo
                       instituicoes   VARCHAR(4000),                   -- "0" = todas
-                      status         VARCHAR(20)   NOT NULL,          -- EM_PROCESSAMENTO | ERRO | CONCLUIDO
+                      status         VARCHAR(20)   NOT NULL,          -- CONCLUIDO | ERRO (EM_PROCESSAMENTO se db2_registrar_inicio)
                       qtd_registros  BIGINT,
                       arquivo        VARCHAR(256),
                       job_run_id     BIGINT,

@@ -3,7 +3,8 @@ PLHDWA · motor de carga Netezza -> Databricks (biblioteca única).
 
 Fluxo de um arquivo (processar_arquivo), igual no despachante (threads) e nos jobs independentes:
   CTL válido? -> DAT existe e não está vazio? -> tabela destino pela tag do código
-  -> controle: EM_PROCESSAMENTO -> sequência -> pré-checagem -> leitura + validação + carga atômica (1 commit)
+  -> [controle: EM_PROCESSAMENTO, só com db2_registrar_inicio = true] -> sequência -> pré-checagem
+  -> leitura + validação + carga atômica (1 commit)
   -> controle: CONCLUIDO (síncrono) -> apaga CTL e DAT -> log CONCLUIDO
   Em erro: controle: ERRO (com a mensagem) + log ERRO_* + arquivos para error/ + objeto travado.
 
@@ -72,6 +73,8 @@ PARAMETROS = {
     "db2_max_conexoes":   ("8",                "conexões simultâneas com o Db2 por processo (as threads compartilham)"),
     "db2_tentativas":     ("3",                "tentativas de gravar na controle antes de ERRO_DB2"),
     "db2_espera_base_s":  ("30",               "espera antes da 2ª tentativa (dobra a cada tentativa)"),
+    "db2_registrar_inicio": ("false",          "true = grava EM_PROCESSAMENTO no Db2 antes da carga (e só carrega se o Db2 "
+                                               "aceitar); false = o Db2 só recebe o fim: CONCLUIDO ou ERRO"),
     # --- leitura ---
     "precheck_linhas":    ("10000",            "linhas lidas na pré-checagem (header, tipos e detector de formato)"),
     "precheck_min_mb":    ("256",              "a partir deste tamanho, todo arquivo faz a pré-checagem completa"),
@@ -100,7 +103,7 @@ COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "fuso_horario",
           "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
-          "db2_espera_base_s",
+          "db2_espera_base_s", "db2_registrar_inicio",
           "lakebase_instance", "lakebase_database", "lakebase_tabela",
           "precheck_linhas", "precheck_min_mb", "tipo_job", "job_id", "job_run_id"]
 
@@ -837,7 +840,7 @@ def _gravar_controle(arq, status, insts, modo, qtd, inicio, fim, mensagem):
 
 
 def sensibilizar_controle(arq, status, insts, modo, qtd=None, inicio=None, fim=None, mensagem=None, tentativas=None):
-    """Grava o status DESTE arquivo na controle: EM_PROCESSAMENTO, ERRO ou CONCLUIDO.
+    """Grava o status DESTE arquivo na controle: CONCLUIDO ou ERRO (e EM_PROCESSAMENTO, com db2_registrar_inicio).
     Síncrono, com novas tentativas (espera crescente). Falhou todas: lança FalhaControle.
     tentativas: padrão = parâmetro db2_tentativas."""
     tentativas = tentativas or int(CTX["db2_tentativas"])
@@ -893,11 +896,15 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
         insts, tamanho = validar_ctl(arq, _p(meta, "header", "true") == "true")
         qtd_anterior, ja_carregado, ultima = info_arquivo(arq)
 
-        # 1) controle: este arquivo começou. Sem isso, não carrega (a controle é síncrona).
-        try:
-            sensibilizar_controle(arq, "EM_PROCESSAMENTO", insts, modo, inicio=inicio)
-        except FalhaControle as e:
-            raise ErroCarga("ERRO_DB2", f"controle não registrou o início: {e}", mover=False)
+        # 1) controle: este arquivo começou. Só com db2_registrar_inicio = true: aí, sem o início gravado, não
+        #    carrega. Padrão (false): o Db2 só recebe o fim (CONCLUIDO ou ERRO); o início fica no log (INICIADO).
+        #    Se o Db2 estiver fora, a carga acontece e só a conclusão falha (ERRO_DB2): os arquivos ficam em raw/
+        #    e, depois do DESBLOQUEIO, a retomada refaz só a conclusão, sem carregar de novo.
+        if str(CTX["db2_registrar_inicio"]).lower() == "true":
+            try:
+                sensibilizar_controle(arq, "EM_PROCESSAMENTO", insts, modo, inicio=inicio)
+            except FalhaControle as e:
+                raise ErroCarga("ERRO_DB2", f"controle não registrou o início: {e}", mover=False)
         eventos(pend + [(arq, "INICIADO", {**comum(), "ts": time.time(), "inicio": inicio})])
         pend = []
 

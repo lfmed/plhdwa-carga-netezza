@@ -100,7 +100,7 @@
     <text x="886" y="154" class="s">religa o despachante se houver CTL parado</text>
     <rect x="250" y="210" width="210" height="70" rx="10" class="box"/><text x="264" y="236" class="t">Tabelas destino (Delta)</text><text x="264" y="254" class="s">metadados e modo = tags + propriedades</text>
     <rect x="500" y="210" width="330" height="70" rx="10" class="box"/><text x="516" y="236" class="t">Log, lotes e limites (plhdwanew)</text><text x="516" y="254" class="s">log_carga_evento · log_lote · ctl_execucao → dashboards</text>
-    <rect x="870" y="210" width="300" height="70" rx="10" class="box v"/><text x="886" y="236" class="t">Controle (Db2 do cliente · ibm_db)</text><text x="886" y="254" class="s">por arquivo: EM_PROCESSAMENTO · ERRO · CONCLUIDO</text>
+    <rect x="870" y="210" width="300" height="70" rx="10" class="box v"/><text x="886" y="236" class="t">Controle (Db2 do cliente · ibm_db)</text><text x="886" y="254" class="s">por arquivo, no fim: CONCLUIDO · ERRO</text>
     <path d="M210 95 H250" class="edge"/><path d="M460 95 H500" class="edge a"/><text x="464" y="88" class="lbl">CTL</text>
     <path d="M830 55 H870" class="edge a"/><text x="836" y="48" class="lbl">run_now</text><path d="M870 140 H830" class="edge"/>
     <path d="M600 170 V210" class="edge"/><path d="M560 170 L460 230" class="edge"/><path d="M760 170 L900 210" class="edge"/>
@@ -122,7 +122,7 @@
     <rect x="285" y="100" width="135" height="40" rx="7" class="box a"/><text x="297" y="118" class="t" style="font-size:12px">ciclo · modo do objeto</text><text x="297" y="132" class="s">tag plhdwa_execucao</text>
     <rect x="435" y="100" width="110" height="40" rx="7" class="box v"/><text x="447" y="118" class="t" style="font-size:12px">ROTEADO</text><text x="447" y="132" class="s">DESPACHANTE / JOB</text>
     <rect x="560" y="175" width="150" height="40" rx="7" class="box"/><text x="572" y="193" class="t" style="font-size:12px">validações</text><text x="572" y="207" class="s">CTL · DAT não vazio · tabela</text>
-    <rect x="560" y="325" width="150" height="40" rx="7" class="box v"/><text x="572" y="343" class="t" style="font-size:12px">EM_PROCESSAMENTO</text><text x="572" y="357" class="s">controle · início</text>
+    <rect x="560" y="325" width="150" height="40" rx="7" class="box v"/><text x="572" y="343" class="t" style="font-size:12px">INICIADO</text><text x="572" y="357" class="s">log · início</text>
     <rect x="725" y="175" width="140" height="40" rx="7" class="box v"/><text x="737" y="193" class="t" style="font-size:12px">INICIADO</text><text x="737" y="207" class="s">aparece em “Em execução”</text>
     <rect x="725" y="250" width="160" height="40" rx="7" class="box v"/><text x="735" y="268" class="t" style="font-size:12px">CARREGADO</text><text x="735" y="282" class="s">1 commit (REPLACE WHERE)</text>
     <rect x="900" y="325" width="140" height="40" rx="7" class="box v"/><text x="912" y="343" class="t" style="font-size:12px">CONCLUIDO</text><text x="912" y="357" class="s">controle · qtd, início, fim</text>
@@ -186,7 +186,7 @@
   <h2><span class="n">4</span>Lotes e controle</h2>
   <div class="grid g2">
     <div class="card"><h4>Lote = uma execução do despachante</h4><p>Começa com <code>INICIADO</code> em <code>log_lote</code> (com quantos CTLs estavam pendentes) e termina com <code>FINALIZADO</code>. Todo arquivo tratado nele, inclusive nos jobs independentes, leva o <code>lote_id</code>. A visão <code>v_lote</code> mostra o status (<b>EM_ANDAMENTO</b>, <b>CONCLUIDO</b>, <b>CONCLUIDO_COM_ERROS</b> ou <b>INTERROMPIDO</b>, quando fica sem fim por 12 h) e os totais de iniciados, concluídos, com erro, em job e registros.</p></div>
-    <div class="card"><h4>Controle = um registro por arquivo</h4><p>Cada arquivo grava a sua própria linha na controle (objeto + data de movimento + data de geração), <b>independente do lote</b>: <code>EM_PROCESSAMENTO</code> (com o início) → <code>CONCLUIDO</code> (quantidade, início, fim) ou <code>ERRO</code> (com a mensagem). O estado atual fica na <b>controle do Db2 do cliente</b> (driver <code>ibm_db</code>, pool de conexões) e o histórico de cada mudança em <code>db2_controle_sim</code> (Delta).</p></div>
+    <div class="card"><h4>Controle = um registro por arquivo</h4><p>Cada arquivo grava a sua própria linha na controle (objeto + data de movimento + data de geração), <b>independente do lote</b>, no fim: <code>CONCLUIDO</code> (quantidade, início, fim) ou <code>ERRO</code> (com a mensagem). O início fica no log (INICIADO); com <code>db2_registrar_inicio = true</code>, o Db2 recebe também <code>EM_PROCESSAMENTO</code>. O estado atual fica na <b>controle do Db2 do cliente</b> (driver <code>ibm_db</code>, pool de conexões) e o histórico de cada mudança em <code>db2_controle_sim</code> (Delta).</p></div>
   </div>
   <h3>O que cada lugar registra</h3>
   <table>
@@ -274,7 +274,7 @@
     <tr><th>Etapa</th><th class="num">Tempo</th><th>Observação</th></tr>
     <tr><td>CTL chega → despachante parado começa</td><td class="num">~1–2 min</td><td>gatilho (~1 min) + arranque (~1 min)</td></tr>
     <tr><td>Ciclo do despachante</td><td class="num">~10 s</td><td><code>ciclo_s = 5</code> + o próprio ciclo; a vaga liberada é preenchida na hora, sem esperar o ciclo</td></tr>
-    <tr><td>Arquivo no DESPACHANTE: até iniciar</td><td class="num">~8 s</td><td>validações + controle EM_PROCESSAMENTO + INICIADO</td></tr>
+    <tr><td>Arquivo no DESPACHANTE: até iniciar</td><td class="num">~8 s</td><td>validações + INICIADO (medido quando o Db2 ainda recebia o EM_PROCESSAMENTO)</td></tr>
     <tr><td>Arquivo no DESPACHANTE: carga e conclusão</td><td class="num">~19 s</td><td>carga + controle CONCLUIDO + log + apagar arquivos</td></tr>
     <tr><td>Arquivo no DESPACHANTE: total</td><td class="num">~27 s</td><td>vazão ≈ 2 arquivos por minuto por vaga</td></tr>
     <tr><td>Job independente Performance: arranque</td><td class="num">1,9 min</td><td>do ROTEADO ao INICIADO</td></tr>
@@ -339,8 +339,8 @@ ALTER TABLE plh.fat_cartao_transacao SET TAGS ('plhdwa_execucao' = 'DESPACHANTE'
     <tr><td><code>ERRO_SCHEMA</code></td><td>ERRO</td><td><code>error/</code></td><td>Decisão humana: ajustar a tabela (9.6) ou pedir correção; devolver para <code>raw/</code>; desbloquear</td></tr>
     <tr><td><code>ERRO_DADOS</code></td><td>ERRO</td><td><code>error/</code></td><td>A mensagem traz o motivo e a 1ª linha inválida; corrigir na origem e reenviar; desbloquear</td></tr>
     <tr><td><code>ERRO_SEQUENCIA</code></td><td>ERRO</td><td><code>error/</code></td><td>Chegou arquivo mais antigo que o último carregado; confirmar com o Netezza</td></tr>
-    <tr><td><code>ERRO_DB2</code> no início</td><td>(fora do ar)</td><td>ficam em <code>raw/</code></td><td>Nada foi carregado. Ver a mensagem: Db2 fora do ar, <b>limite de conexões</b> do Db2 (reduzir <code>db2_max_conexoes</code> ou <code>max_simult</code> do JOB) ou driver <code>ibm_db</code> indisponível em máquina ARM (job independente). Resolver e desbloquear: o arquivo é processado do zero</td></tr>
-    <tr><td><code>ERRO_DB2</code> na conclusão</td><td>EM_PROCESSAMENTO</td><td>ficam em <code>raw/</code></td><td>Dados já estão no Delta. Resolver e desbloquear: o motor refaz <b>só a conclusão</b></td></tr>
+    <tr><td><code>ERRO_DB2</code> no início (só com <code>db2_registrar_inicio = true</code>)</td><td>(fora do ar)</td><td>ficam em <code>raw/</code></td><td>Nada foi carregado. Ver a mensagem: Db2 fora do ar, <b>limite de conexões</b> do Db2 (reduzir <code>db2_max_conexoes</code> ou <code>max_simult</code> do JOB) ou driver <code>ibm_db</code> indisponível em máquina ARM (job independente). Resolver e desbloquear: o arquivo é processado do zero</td></tr>
+    <tr><td><code>ERRO_DB2</code> na conclusão</td><td>(sem linha; ou EM_PROCESSAMENTO com <code>db2_registrar_inicio</code>)</td><td>ficam em <code>raw/</code></td><td>Dados já estão no Delta. Resolver e desbloquear: o motor refaz <b>só a conclusão</b></td></tr>
     <tr><td><code>ERRO_EXECUCAO</code></td><td>—</td><td>ficam em <code>raw/</code></td><td>Job independente caiu sem registrar o fim: ver no Jobs; desbloquear</td></tr>
   </table>
 <pre><span class="c">-- desbloquear (registra quem e por quê)</span>
@@ -443,7 +443,7 @@ implantacao/ferramentas/cadastrar_em_lote.sh objetos.csv implantacao/netezza/exe
   <details><summary>Chegou um CTL e nada aconteceu.</summary><p>Espere ~2 min (gatilho + arranque). Se já houver lote rodando, o arquivo entra no próximo ciclo. Se o objeto estiver travado, ele é ignorado até o DESBLOQUEIO.</p></details>
   <details><summary>Onde vejo os jobs em execução?</summary><p>Dashboard <b>PLHDWA · Execução</b>, página <b>Em execução</b>: cards “Objetos em execução”, “Jobs independentes em execução”, “Arquivos rodando no despachante” e “Despachante: lotes em andamento”, mais as tabelas “Objetos em execução” (1 linha por objeto), “Jobs independentes em execução” (1 linha por job, inclusive na fila do Jobs ou trocando de arquivo; coluna “Execução do job” = run_id no Jobs), “Arquivos em execução” e “Lotes”.</p></details>
   <details><summary>Um arquivo do despachante dá erro: os outros do mesmo lote param?</summary><p>Não. Só o objeto do arquivo trava; os demais objetos continuam no mesmo lote. No fim, o lote fica CONCLUIDO_COM_ERROS e a execução termina FAILED (para notificar).</p></details>
-  <details><summary>A controle é atualizada por lote ou por arquivo?</summary><p>Por arquivo, sempre: cada um grava EM_PROCESSAMENTO, ERRO ou CONCLUIDO na sua própria linha, rodando no despachante ou em job. O lote é só uma referência (<code>lote_id</code>).</p></details>
+  <details><summary>A controle é atualizada por lote ou por arquivo?</summary><p>Por arquivo, sempre: cada um grava, no fim, CONCLUIDO ou ERRO na sua própria linha, rodando no despachante ou em job. O lote é só uma referência (<code>lote_id</code>).</p></details>
   <details><summary>A controle (Db2) caiu no meio da janela.</summary><p>Arquivos que iam começar travam com ERRO_DB2 sem carregar nada; os que estavam terminando ficam com os dados no Delta e ERRO_DB2. Quando a controle voltar: desbloquear e rodar o despachante.</p></details>
   <details><summary>Chegaram 300 arquivos: abre um despachante para cada um?</summary><p>Não. Existe no máximo 1 lote rodando; ele trata os 300 conforme as vagas de cada modo (seção 5).</p></details>
 </section>

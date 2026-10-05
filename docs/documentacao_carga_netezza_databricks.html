@@ -167,8 +167,8 @@
   definido por tag na tabela destino: <b>DESPACHANTE</b> (thread dentro do despachante) ou <b>JOB</b> (job independente, Standard ou
   Performance Optimized, que segue com os arquivos do mesmo objeto). <b>A vaga é do arquivo</b>: quando um arquivo termina, a vaga é
   preenchida na hora pelo próximo arquivo elegível, com prioridade para o objeto com mais trabalho pendente. Cada arquivo é validado, carregado num único commit Delta (REPLACE WHERE na FATO, substituição total na DIM) e
-  <b>sensibiliza a controle no Db2 do cliente por conta própria</b> (driver <code>ibm_db</code>): EM_PROCESSAMENTO ao começar, ERRO (com a
-  mensagem) ou CONCLUIDO (com quantidade, início e fim). O bundle é entregue parametrizado: nada de ambiente fica fixo no código (seção 18).</p>
+  <b>sensibiliza a controle no Db2 do cliente por conta própria</b> (driver <code>ibm_db</code>): no fim de cada arquivo, CONCLUIDO (com quantidade, início e fim) ou ERRO (com a
+  mensagem); o início fica no log do Databricks (decisão 14). O bundle é entregue parametrizado: nada de ambiente fica fixo no código (seção 18).</p>
 
   <div class="grid g4">
     <div class="card kpi"><b>Gatilho</b><span>Chegada do CTL</span></div>
@@ -186,7 +186,7 @@
     <tr><th>#</th><th>Definição</th><th>Como ficou</th></tr>
     <tr><td>1</td><td>Sem filas P/M/G: jobs no despachante ou independentes, comandados por parâmetro</td><td>Tags <code>plhdwa_execucao</code> (DESPACHANTE | JOB) e <code>plhdwa_tipo_job</code> (PERFORMANCE_OPTIMIZED | STANDARD) na tabela destino de cada objeto; vagas por modo em <code>ctl_execucao</code> (seção 10)</td></tr>
     <tr><td>2</td><td>DAT que não vem ou vem em branco gera erro</td><td><code>ERRO_PAR</code> (sem DAT) e <code>ERRO_DAT_VAZIO</code> (0 bytes, só header ou em branco), checados <b>antes</b> da carga</td></tr>
-    <tr><td>3</td><td>A controle registra início, erro e conclusão</td><td>Por arquivo: <code>EM_PROCESSAMENTO</code> → <code>ERRO</code> (mensagem) ou <code>CONCLUIDO</code> (quantidade, início, fim). Sem registrar o início, o arquivo não é carregado</td></tr>
+    <tr><td>3</td><td>A controle registra início, erro e conclusão</td><td>Por arquivo: <code>CONCLUIDO</code> (quantidade, início, fim) ou <code>ERRO</code> (mensagem). <i>Revisto na decisão 14:</i> o início deixou de ir para o Db2 (padrão); com <code>db2_registrar_inicio = true</code> volta o <code>EM_PROCESSAMENTO</code> e, sem ele, o arquivo não é carregado</td></tr>
     <tr><td>4</td><td>Logs com quantidade, início e fim, e lotes em andamento</td><td><code>log_carga_evento</code> (por arquivo), <code>log_lote</code> + <code>v_lote</code> (EM_ANDAMENTO, CONCLUIDO, CONCLUIDO_COM_ERROS, INTERROMPIDO)</td></tr>
     <tr><td>5</td><td>Dashboard mostra os jobs em execução</td><td>Página <b>Em execução</b>: lotes em andamento, jobs independentes em execução, arquivos rodando no despachante, tabela de arquivos em execução e de lotes</td></tr>
     <tr><td>6</td><td>Cada arquivo sensibiliza a controle de forma independente do lote</td><td>Mesmo em thread dentro do despachante, cada arquivo grava a sua linha e os seus status; o lote é só uma referência (<code>lote_id</code>)</td></tr>
@@ -197,6 +197,7 @@
     <tr><td>11</td><td>Bundle para o cliente, comentado e parametrizável (catálogo dos objetos e tudo)</td><td>Variáveis com descrição, targets dev/hml/prd, instalação pelo pós-deploy, pacote de entrega (seção 18)</td></tr>
     <tr><td>12</td><td>Detalhe do dashboard lista os jobs em processamento</td><td>Tabela “Jobs independentes em execução” (1 linha por job: execução, objeto, estado no Jobs, minutos rodando, arquivo atual, arquivos concluídos no job). Vem da foto <code>log_job_ativo</code>, gravada a cada ciclo do despachante com o mesmo horário do cartão: o job aparece também na fila do Jobs, arrancando e entre um arquivo e outro. O evento <code>ROTEADO</code> do job passou a levar a execução do job e a tabela destino</td></tr>
     <tr><td>13</td><td>Driver do Db2 vem no environment do job (serverless)</td><td>Environment <code>plhdwa</code> em todos os jobs (<code>ibm-db</code>, <code>databricks-sdk</code>, <code>pg8000</code>), sem <code>pip install</code> nos notebooks; versão do ambiente fixa em 1 (<code>serverless_ambiente</code>). Testada a versão mais nova (6) com <code>ibm-db</code>: 3 de 3 jobs falharam na instalação (máquina ARM); na versão 1, 14/14 em dois lotes</td></tr>
+    <tr><td>14</td><td>Não marcar mais na controle do Db2 que o arquivo iniciou; só sinalizar que finalizou (pedido do cliente)</td><td>Variável <code>db2_registrar_inicio</code> (padrão <code>false</code>): o Db2 recebe só <code>CONCLUIDO</code> ou <code>ERRO</code> (opção A: o erro também é um fim); o início fica no log (INICIADO) e no dashboard. Consequência: a carga não depende mais do Db2 para começar; com o Db2 fora, o arquivo é carregado e só a conclusão falha (<code>ERRO_DB2</code>, arquivos em <code>raw/</code>), e a retomada refaz só a conclusão, sem recarregar. Com <code>true</code> volta o comportamento anterior (sem o início no Db2, nada carrega)</td></tr>
   </table>
   <div class="callout">Manual de operação, cadastro de novos arquivos e o cenário “1 arquivo → +10 → +300” ilustrado: <code>manual_operacao_plhdwa.html</code>.</div>
   <div class="callout">Cada notebook e função do ingestor, e a prova de que a carga FATO troca só a data (ou a data + instituições do CTL) e a DIM troca tudo: <code>documentacao_tecnica_plhdwa.html</code>.</div>
@@ -397,7 +398,7 @@
     <text x="578" y="324" class="s">• carga_arquivo_perf | carga_arquivo_std (tag plhdwa_tipo_job)</text>
     <text x="578" y="341" class="s">• compute isolado; arranque 1× por objeto (até 20 arq.)</text>
     <text x="578" y="358" class="s">• mesmo código das threads do despachante</text>
-    <text x="578" y="375" class="s">• controle: EM_PROCESSAMENTO → CONCLUIDO | ERRO</text>
+    <text x="578" y="375" class="s">• controle: CONCLUIDO | ERRO (fim)</text>
     <text x="578" y="392" class="s">• log → apaga / error/</text>
     <text x="578" y="409" class="s">• tag OWNER = PLHDWA</text>
 
@@ -456,7 +457,7 @@
     <text x="998" y="530" class="s">(filtro pela tag)</text>
     <path d="M926 481 H984" class="edge"/>
     <path d="M926 412 H952 V578 H131 V550" class="edge acc"/>
-    <text x="270" y="572" class="al">⑨ controle por arquivo (EM_PROCESSAMENTO · ERRO · CONCLUIDO) no Db2 on-premises · ibm_db pelo NCC · pool de conexões</text>
+    <text x="270" y="572" class="al">⑨ controle por arquivo (CONCLUIDO · ERRO) no Db2 on-premises · ibm_db pelo NCC · pool de conexões</text>
   </svg>
   </div>
   <div class="callout ok"><b>“Um arquivo em cada JOB”, onde faz sentido:</b> objetos com <code>plhdwa_execucao = JOB</code> têm uma execução de job por arquivo, com compute isolado e visibilidade no Jobs. Os demais (a grande maioria) rodam em threads dentro do despachante, sem arranque por arquivo. Quem decide é o cadastro do objeto, não o tamanho do arquivo.</div>
@@ -489,7 +490,7 @@
   <h3>Ciclo de vida</h3>
   <div class="states">
     <span class="st">RECEBIDO</span><span class="arr">→</span><span class="st">ROTEADO (DESPACHANTE | JOB)</span><span class="arr">→</span>
-    <span class="st">INICIADO · controle EM_PROCESSAMENTO</span><span class="arr">→</span>
+    <span class="st">INICIADO (log)</span><span class="arr">→</span>
     <span class="st ok">CARREGADO</span><span class="arr">→</span><span class="st ok">CONFIRMADO_DB2 · controle CONCLUIDO</span><span class="arr">→</span><span class="st ok">CONCLUIDO</span>
   </div>
   <div class="states">
@@ -509,7 +510,7 @@
     <li><h4>Ciclo do despachante</h4><p>A cada <code>ciclo_s</code> (~5–10 s): relê <code>ctl_execucao</code>, a pasta e os jobs; descarta concluídos e objetos travados ou já em processamento; agrupa por objeto e ordena por data de geração. <b>Entre um ciclo e outro</b>, cada vaga que libera é preenchida na hora com o que já está em memória.</p></li>
     <li><h4>Modo de execução e prioridade</h4><p>Tag <code>plhdwa_execucao</code>: <b>DESPACHANTE</b> → 1 thread para <b>1 arquivo</b>, que devolve a vaga ao terminar; <b>JOB</b> → <code>run_now</code> do job do tipo da tag <code>plhdwa_tipo_job</code>, que segue com os próximos arquivos do mesmo objeto. Vai primeiro o objeto com mais trabalho pendente. Sem vaga no modo, o objeto espera a próxima vaga.</p></li>
     <li><h4>Validações</h4><p>CTL × nome, datas válidas, DAT presente (<code>ERRO_PAR</code>) e não vazio (<code>ERRO_DAT_VAZIO</code>), código cadastrado (<code>ERRO_CADASTRO</code>).</p></li>
-    <li><h4>Controle: início <span class="who db2">Db2</span></h4><p>Grava <code>EM_PROCESSAMENTO</code> (com o início) para <b>este arquivo</b>. Se a controle não responder, <code>ERRO_DB2</code> e nada é carregado. Log: INICIADO (o arquivo aparece em “Em execução”).</p></li>
+    <li><h4>Início <span class="who db2">log</span></h4><p>Log: INICIADO (o arquivo aparece em “Em execução”). O Db2 não recebe o início (padrão, decisão 14). Só com <code>db2_registrar_inicio = true</code>: grava <code>EM_PROCESSAMENTO</code> para <b>este arquivo</b> e, se a controle não responder, <code>ERRO_DB2</code> e nada é carregado.</p></li>
     <li><h4>Sequência, header e pré-checagem</h4><p>Geração maior que a última carregada; header igual ao layout; amostra de 10 mil linhas com o detector de formato (arquivos grandes, ou o 1º de cada objeto no lote).</p></li>
     <li><h4>Carga atômica <span class="who dbx">Delta</span></h4><p>Leitura, validação e escrita na mesma leitura. FATO: <code>REPLACE WHERE</code> data (+ instituições); DIM: substitui tudo. Um commit.</p></li>
     <li><h4>Controle: conclusão <span class="who db2">Db2</span></h4><p>Grava <code>CONCLUIDO</code> com quantidade de registros, início e fim. Se falhar: <code>ERRO_DB2</code>, os dados ficam e só a conclusão é refeita depois do desbloqueio.</p></li>
@@ -618,8 +619,8 @@ log_lote: lote_id, evento_ts, status (INICIADO | FINALIZADO), pendentes, mensage
 
 <span class="c">-- controle no Db2 do cliente (variável db2_tabela): 1 linha por arquivo</span>
 MERGE em sql/02_db2_controle_merge.sql (14 parâmetros, editável pelo DBA):
-  chave cod_objeto + data_movimento + data_geracao · status (EM_PROCESSAMENTO |
-  ERRO | CONCLUIDO) · qtd_registros · dt_inicio · dt_fim · mensagem · lote · modo
+  chave cod_objeto + data_movimento + data_geracao · status (CONCLUIDO |
+  ERRO; EM_PROCESSAMENTO só com db2_registrar_inicio) · qtd_registros · dt_inicio · dt_fim · mensagem · lote · modo
 variante: sql/02_db2_controle_merge_tabela_controle.sql (layout CONTROLE)
 Delta db2_controle_sim: histórico, 1 linha por mudança de status
 <span class="c">-- (Lakebase só no db2_modo = SIMULADO, para testar sem Db2)</span>
@@ -646,8 +647,8 @@ v_arquivo_concluido · v_projecao_termino</pre>
     <tr><td><b>ERRO_SEQUENCIA</b></td><td>Geração ≤ última carregada do objeto</td><td>Antes da carga</td><td><code>error/</code></td></tr>
     <tr><td><b>ERRO_SCHEMA</b></td><td>Header ≠ layout (coluna nova, removida, renomeada)</td><td>Pré-checagem</td><td><code>error/</code></td></tr>
     <tr><td><b>ERRO_DADOS</b></td><td>Nº de campos, tipo, data ≠ CTL, instituição fora da lista · a mensagem traz o motivo e a 1ª linha inválida</td><td>Pré-checagem ou carga (antes do commit)</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_DB2</b> (início)</td><td>Controle não registrou EM_PROCESSAMENTO (Db2 fora, limite de conexões, driver indisponível)</td><td>Antes da carga: nada carregado</td><td>ficam em <code>raw/</code></td></tr>
-    <tr><td><b>ERRO_DB2</b> (conclusão)</td><td>Controle não registrou CONCLUIDO após 3 tentativas</td><td>Depois do commit: dados no Delta; a retomada refaz só a conclusão</td><td>ficam em <code>raw/</code></td></tr>
+    <tr><td><b>ERRO_DB2</b> (início, só com <code>db2_registrar_inicio = true</code>)</td><td>Controle não registrou EM_PROCESSAMENTO (Db2 fora, limite de conexões, driver indisponível)</td><td>Antes da carga: nada carregado</td><td>ficam em <code>raw/</code></td></tr>
+    <tr><td><b>ERRO_DB2</b> (conclusão)</td><td>Controle não registrou CONCLUIDO após 3 tentativas. No padrão (Db2 só recebe o fim), é aqui que um Db2 fora aparece</td><td>Depois do commit: dados no Delta; a retomada refaz só a conclusão</td><td>ficam em <code>raw/</code></td></tr>
     <tr><td><b>ERRO_EXECUCAO</b></td><td>Job independente terminou sem evento final</td><td>Detectado pelo despachante</td><td>ficam em <code>raw/</code></td></tr>
   </table>
 </section>
@@ -674,7 +675,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
   <table>
     <tr><th>Conceito</th><th>Regra</th></tr>
     <tr><td>Lote</td><td>Uma execução do despachante (<code>lote_id</code> = execução). No máximo 1 por vez; disparos do gatilho durante o lote esperam na fila do Jobs. Arquivos que chegam durante o lote são tratados por ele.</td></tr>
-    <tr><td>Controle por arquivo</td><td>Cada arquivo grava EM_PROCESSAMENTO, ERRO ou CONCLUIDO na sua própria linha, rodando no despachante ou em job. Início e fim do processamento e quantidade de registros vão junto.</td></tr>
+    <tr><td>Controle por arquivo</td><td>Cada arquivo grava CONCLUIDO ou ERRO (e EM_PROCESSAMENTO, com <code>db2_registrar_inicio = true</code>) na sua própria linha, rodando no despachante ou em job. Início e fim do processamento e quantidade de registros vão junto.</td></tr>
     <tr><td>Ordem</td><td>No máximo 1 arquivo por objeto em andamento, em qualquer modo; arquivos do mesmo objeto em ordem de geração. Por isso <code>max_simult</code> = objetos diferentes em paralelo.</td></tr>
     <tr><td>Vaga</td><td>É do <b>arquivo</b>, não do objeto. Liberou, o despachante escolhe na hora o próximo arquivo elegível; entre os objetos, primeiro o com a cadeia mais longa (mais arquivos e bytes pendentes).</td></tr>
     <tr><td>Novos arquivos</td><td>A pasta é relida a cada ciclo: o que chega durante o lote entra no mesmo lote, sem esperar o fim.</td></tr>
@@ -704,7 +705,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
   <table>
     <tr><th>Página</th><th>Visuais</th></tr>
     <tr><td><b>Em execução</b></td><td>Cards: <b>objetos em execução</b> · arquivos rodando no despachante · <b>jobs independentes em execução</b> · lotes em andamento · aguardando · travados · concluídos, registros e GB do dia · tabela de <b>objetos em execução</b> (1 linha por objeto: arquivo atual, modo, segundos, concluídos no lote) · tabela de arquivos em execução (estado, modo, há quanto tempo) · tabela de lotes · em andamento × vagas por modo · limites (<code>ctl_execucao</code>)</td></tr>
-    <tr><td><b>Objetos e controle</b></td><td>Travados · eventos (filtros por status e objeto) · controle por arquivo (EM_PROCESSAMENTO · ERRO · CONCLUIDO, com início, fim e registros)</td></tr>
+    <tr><td><b>Objetos e controle</b></td><td>Travados · eventos (filtros por status e objeto) · controle por arquivo (CONCLUIDO · ERRO, com início, fim e registros)</td></tr>
     <tr><td><b>Desempenho</b></td><td>Duração e vazão por modo e tipo de job · arquivos concluídos</td></tr>
     <tr><td><b>Histórico</b></td><td>Arquivos por dia · erros por dia · resumo diário</td></tr>
   </table>
@@ -868,6 +869,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
     <tr><th>Teste</th><th>Resultado</th><th></th></tr>
     <tr><td>Conexão do serverless (SSL), secret scope</td><td>~0,8 s para conectar; ~0,15 s por gravação</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Job “testar controle Db2”: EM_PROCESSAMENTO → CONCLUIDO e EM_PROCESSAMENTO → ERRO na mesma linha</td><td>4 gravações em 0,6 s; linhas de teste apagadas</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 14 (Db2 só recebe o fim), 05/10: arquivo normal, arquivo com erro e Db2 fora + retomada</td><td>Controle só com CONCLUIDO (normal) e ERRO (erro), nenhum EM_PROCESSAMENTO/EXECUTANDO no Db2; com o Db2 fora o arquivo carregou, deu ERRO_DB2 na conclusão e ficou em raw/; após o DESBLOQUEIO, a retomada gravou CONCLUIDO sem novo commit na tabela</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Ponta a ponta: 44 arquivos em 3 lotes</td><td>44 linhas CONCLUIDO na controle, com início e fim; depois apagadas</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Limite de conexões do Db2 (15) com 22 threads</td><td>sem pool: 7 ERRO_DB2 no início (nada carregado); com pool de 8: 22 objetos em paralelo, 1,8 min, 0 erros</td><td><span class="pill p-ok">Aprovado após correção</span></td></tr>
     <tr><td>Job independente em máquina ARM (aarch64)</td><td>ibm_db não instala → ERRO_DB2 claro, sem carga (3 de 3 jobs no teste). Environment fixo na versão 1: 14/14 em dois lotes (3 jobs, 1 por objeto, 2,03 milhões de registros, controle no Db2 confirmada). Versão 6 + <code>ibm-db</code>: 3 de 3 jobs falharam na instalação</td><td><span class="pill p-ok">Resolvido (W1)</span></td></tr>
