@@ -36,12 +36,21 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
 
 1. **Databricks CLI** ≥ 0.250 autenticada no workspace (`databricks auth login --host <workspace>`).
 2. **Catálogo** do Unity Catalog para as tabelas operacionais (variável `catalogo`). O schema é criado pelo pós-deploy.
-3. **Landing** (variáveis `landing_tipo` e `landing`), com as subpastas `raw/data`, `raw/ctl` e `error`:
+3. **Landing** (variáveis `landing_tipo` e `landing`). Dentro do prefixo ficam as pastas, com os nomes nas
+   variáveis `pasta_dat`, `pasta_ctl`, `pasta_erro` e `pasta_tmp` (padrão do cliente):
+   ```
+   s3://<bucket>/<prefixo>/          ← landing
+   ├── dados/   ← pasta_dat:  os .dat (o Netezza grava primeiro)
+   ├── ctl/     ← pasta_ctl:  os .CTL (o Netezza grava por último; o gatilho do despachante olha só aqui)
+   ├── erro/    ← pasta_erro: o motor move para cá o par (CTL + DAT) com erro de negócio
+   └── tmp/     ← pasta_tmp:  transformação temporária do cliente (o motor não lê nem grava aqui)
+   ```
+   Os nomes podem ser trocados por ambiente (ex.: `pasta_ctl: entrada/ctl`); o motor confere que são diferentes.
    - **`landing_tipo = S3` (padrão): direto no bucket** em que o Netezza grava, `landing = s3://<bucket>/<prefixo>`.
      Não precisa de volume, mas no serverless todo acesso a S3 passa pelo Unity Catalog, então é preciso uma
      **External Location** cobrindo o caminho:
      1. role IAM com `s3:GetObject`, `PutObject`, `DeleteObject` e `ListBucket` no bucket/prefixo (o motor apaga os
-        concluídos e move os com erro para `error/`);
+        concluídos e move os com erro para `erro/`);
      2. *storage credential* com essa role;
      3. external location com **file events** habilitado (o gatilho do despachante fica rápido e escalável):
         ```sql
@@ -149,7 +158,7 @@ O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o m
 ## 7. Testar
 
 - `plhdwa_testar_controle_db2`: grava 2 arquivos fictícios (objeto 0) com o comando real e apaga no fim.
-- Arquivo real: copie um par DAT + CTL para `raw/data` e depois `raw/ctl` (o CTL dispara). No S3:
+- Arquivo real: copie um par DAT + CTL para `dados` e depois `ctl` (o CTL dispara). No S3:
   `aws s3 cp` (ou o próprio Netezza); `plhdwa_gerar_teste_tempo` também grava no S3 com `landing_tipo = S3`. Esperado: carga na
   tabela destino, `CONCLUIDO` em `v_status_arquivo`, linha `CONCLUIDO` na controle do Db2, arquivos apagados.
 - `plhdwa_validar_testes`: compara um manifesto (resultado esperado por arquivo) com o log e com a controle.

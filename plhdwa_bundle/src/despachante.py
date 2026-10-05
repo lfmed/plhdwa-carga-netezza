@@ -1,7 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # PLHDWA · Despachante (cada execução = 1 lote)
-# MAGIC Disparado pela chegada de CTL em `raw/ctl/`. Regras:
+# MAGIC Disparado pela chegada de CTL na pasta `pasta_ctl` da landing (padrão `ctl/`). Regras:
 # MAGIC - o **modo de execução vem da tag do objeto** (`plhdwa_execucao`):
 # MAGIC   - **DESPACHANTE**: o arquivo roda aqui mesmo, numa thread;
 # MAGIC   - **JOB**: dispara um job independente (`plhdwa_tipo_job` escolhe Standard ou Performance), que segue

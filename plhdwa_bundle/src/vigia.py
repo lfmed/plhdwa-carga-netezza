@@ -18,7 +18,7 @@ w = WorkspaceClient()
 
 # CTLs que estão na pasta há mais tempo que o limite e ainda não foram concluídos (nem são de objeto travado)
 limite_ms = (time.time() - float(P["vigia_parado_min"]) * 60) * 1000
-antigos = {f.name for f in m._ls(m.pasta("raw/ctl")) if f.modificationTime < limite_ms}
+antigos = {f.name for f in m._ls(m.pasta(m.CTX["pasta_ctl"])) if f.modificationTime < limite_ms}
 pend = [a for arqs in m.pendentes().values() for a in arqs if a["nome_ctl"] in antigos]
 rodando = list(w.jobs.list_runs(job_id=int(P["despachante_job_id"]), active_only=True))
 print(f"pendentes há mais de {P['vigia_parado_min']} min: {len(pend)} · despachante rodando: {bool(rodando)}")

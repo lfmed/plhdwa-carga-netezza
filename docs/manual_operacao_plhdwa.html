@@ -87,9 +87,9 @@
   <div class="diagram"><svg viewBox="0 0 1180 300" role="img" aria-label="Componentes do motor">
     <defs><marker id="seta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--navy)"/></marker></defs>
     <rect x="10" y="40" width="200" height="110" rx="10" class="box"/><text x="24" y="66" class="t">Netezza (AWS)</text>
-    <text x="24" y="86" class="s">grava o .dat em raw/data/</text><text x="24" y="102" class="s">depois o .CTL em raw/ctl/</text><text x="24" y="118" class="s">em ordem de geração</text>
+    <text x="24" y="86" class="s">grava o .dat em dados/</text><text x="24" y="102" class="s">depois o .CTL em ctl/</text><text x="24" y="118" class="s">em ordem de geração</text>
     <rect x="250" y="40" width="210" height="110" rx="10" class="box"/><text x="264" y="66" class="t">Landing (S3 direto / volume)</text>
-    <text x="264" y="86" class="s">raw/data · raw/ctl · error</text><text x="264" y="102" class="s">CTL parado aqui =</text><text x="264" y="118" class="s">arquivo aguardando</text>
+    <text x="264" y="86" class="s">dados · ctl · erro</text><text x="264" y="102" class="s">CTL parado aqui =</text><text x="264" y="118" class="s">arquivo aguardando</text>
     <rect x="500" y="20" width="330" height="150" rx="10" class="box a"/><text x="516" y="46" class="t">Despachante = 1 lote por execução</text>
     <text x="516" y="66" class="s">⚡ gatilho: chegada de CTL · 1 execução por vez</text><text x="516" y="84" class="s">vaga livre = próximo arquivo na hora; o modo vem</text>
     <text x="516" y="100" class="s">da tag do objeto; respeita as vagas de cada modo</text><text x="516" y="122" class="s" style="fill:var(--D)">● DESPACHANTE: 1 thread por arquivo (24 vagas)</text>
@@ -130,7 +130,7 @@
     <path d="M270 45 L300 100" class="edge"/><path d="M420 120 H435" class="edge"/><path d="M545 125 L570 175" class="edge"/>
     <path d="M635 215 V325" class="edge"/><path d="M710 340 L740 215" class="edge"/><path d="M795 215 V250" class="edge"/>
     <path d="M885 275 L920 325" class="edge"/><path d="M1040 330 L1080 65" class="edge a"/>
-    <text x="1170" y="400" class="nao" text-anchor="end">erro em qualquer passo → log ERRO_* · controle ERRO (com a mensagem) · arquivos para error/ · objeto TRAVA</text>
+    <text x="1170" y="400" class="nao" text-anchor="end">erro em qualquer passo → log ERRO_* · controle ERRO (com a mensagem) · arquivos para erro/ · objeto TRAVA</text>
     <text x="1170" y="418" class="nao" text-anchor="end">controle fora do ar no início → ERRO_DB2, nada é carregado · na conclusão → ERRO_DB2, dados ficam e só a conclusão é refeita</text>
   </svg></div>
   <div class="grid g3" style="margin-top:12px">
@@ -149,7 +149,7 @@
     <div class="card"><h4><span class="pill pJ">JOB</span> (job independente)</h4><p>O objeto ganha <b>uma execução de job</b>, com compute isolado e visível no Jobs, que <b>segue com os próximos arquivos do mesmo objeto</b> (até 20 arquivos ou 60 min). O arranque (~1,9 min em Performance Optimized; ~7 min em Standard) é pago uma vez por objeto. Indicado para objetos muito grandes.</p></div>
   </div>
   <div class="diagram" style="margin-top:12px"><svg viewBox="0 0 1180 260" role="img" aria-label="Decisão do modo">
-    <rect x="10" y="100" width="150" height="60" rx="8" class="box a"/><text x="22" y="126" class="t">CTL pendente</text><text x="22" y="144" class="s">em raw/ctl/</text>
+    <rect x="10" y="100" width="150" height="60" rx="8" class="box a"/><text x="22" y="126" class="t">CTL pendente</text><text x="22" y="144" class="s">em ctl/</text>
     <rect x="200" y="100" width="160" height="60" rx="8" class="box"/><text x="212" y="124" class="t" style="font-size:12px">Objeto travado?</text><text x="212" y="142" class="s">v_objeto_travado</text>
     <rect x="400" y="100" width="190" height="60" rx="8" class="box"/><text x="412" y="124" class="t" style="font-size:12px">Objeto já tem arquivo</text><text x="412" y="140" class="t" style="font-size:12px">rodando?</text>
     <rect x="630" y="100" width="190" height="60" rx="8" class="box"/><text x="642" y="124" class="t" style="font-size:12px">Tag plhdwa_execucao</text><text x="642" y="142" class="s">do objeto</text>
@@ -205,10 +205,10 @@
   <p class="lead"><b>Simulação</b> com as regras do despachante implantado e os tempos medidos no lote grande: arquivo no despachante ≈ ~27 s (vaga por arquivo, 24 vagas); job independente ≈ 1,9 min de arranque, uma vez, + ~25 s por arquivo. 22 objetos estão no modo DESPACHANTE e 3 no modo JOB.</p>
   <ol class="passos">
     <li><h4>① 00:00 · chega 1 arquivo</h4><p>O Netezza grava o DAT e depois o CTL. Ainda não há nada rodando.</p></li>
-    <li><h4>② 00:00–01:00 · chegam mais 10 (7 de objetos DESPACHANTE, 3 de objetos JOB)</h4><p>Ficam em <code>raw/ctl/</code>. O despachante sempre lista a pasta inteira a cada ciclo.</p></li>
+    <li><h4>② 00:00–01:00 · chegam mais 10 (7 de objetos DESPACHANTE, 3 de objetos JOB)</h4><p>Ficam em <code>ctl/</code>. O despachante sempre lista a pasta inteira a cada ciclo.</p></li>
     <li><h4>③ 01:00–02:00 · gatilho e arranque</h4><p>O gatilho dispara o despachante (~1 min) e ele arranca (~1 min). O <b>lote 1</b> começa: <code>INICIADO</code> com 11 pendentes.</p></li>
     <li><h4>④ 02:00 · 1º ciclo</h4><p>8 objetos DESPACHANTE viram 8 threads, 1 arquivo cada. Os 3 objetos JOB viram 3 <code>run_now</code>, cada um no job do seu tipo; ficam como ROTEADO enquanto o job arranca. Cada arquivo grava <code>EM_PROCESSAMENTO</code> na controle ao começar.</p></li>
-    <li><h4>⑤ 03:00 · chegam 300</h4><p>280 de 22 objetos DESPACHANTE e 20 de 3 objetos JOB. Ficam em <code>raw/ctl/</code>; o lote 1 os enxerga no próximo ciclo.</p></li>
+    <li><h4>⑤ 03:00 · chegam 300</h4><p>280 de 22 objetos DESPACHANTE e 20 de 3 objetos JOB. Ficam em <code>ctl/</code>; o lote 1 os enxerga no próximo ciclo.</p></li>
     <li><h4>⑥ ~03:15 · todos os objetos andando</h4><p>Os 22 objetos DESPACHANTE ocupam 22 das 24 vagas, 1 arquivo cada; a cada arquivo que termina, a vaga é preenchida <b>na hora</b> pelo próximo arquivo, primeiro dos objetos com mais pendentes. Os 3 jobs seguem sozinhos com os arquivos dos seus objetos, sem novo arranque.</p></li>
     <li><h4>⑦ 04:00 · o gatilho dispara de novo</h4><p>Com <code>max_concurrent_runs = 1</code>, o <b>lote 2</b> espera na fila do Jobs: nunca há dois despachantes ao mesmo tempo.</p></li>
     <li><h4>⑧ fim</h4><p>Sem pendentes nem nada rodando, o lote 1 grava <code>FINALIZADO</code> (≈ 9 min na simulação). O lote 2 começa, não encontra nada e encerra.</p></li>
@@ -333,29 +333,29 @@ ALTER TABLE plh.fat_cartao_transacao SET TAGS ('plhdwa_execucao' = 'DESPACHANTE'
   <h3>8.4 Erros e desbloqueio</h3>
   <table>
     <tr><th>Erro</th><th>Controle</th><th>Arquivos</th><th>O que fazer</th></tr>
-    <tr><td><code>ERRO_CTL</code> · <code>ERRO_PAR</code></td><td>ERRO</td><td><code>error/</code></td><td>Pedir ao Netezza novo par com <b>nova data de geração</b>; desbloquear</td></tr>
-    <tr><td><code>ERRO_DAT_VAZIO</code></td><td>ERRO</td><td><code>error/</code></td><td>DAT com 0 bytes ou só header: pedir reenvio; desbloquear</td></tr>
-    <tr><td><code>ERRO_CADASTRO</code></td><td>ERRO</td><td><code>error/</code></td><td>Cadastrar o objeto (seção 9) ou corrigir a tag; devolver o par para <code>raw/</code>; desbloquear</td></tr>
-    <tr><td><code>ERRO_SCHEMA</code></td><td>ERRO</td><td><code>error/</code></td><td>Decisão humana: ajustar a tabela (9.6) ou pedir correção; devolver para <code>raw/</code>; desbloquear</td></tr>
-    <tr><td><code>ERRO_DADOS</code></td><td>ERRO</td><td><code>error/</code></td><td>A mensagem traz o motivo e a 1ª linha inválida; corrigir na origem e reenviar; desbloquear</td></tr>
-    <tr><td><code>ERRO_SEQUENCIA</code></td><td>ERRO</td><td><code>error/</code></td><td>Chegou arquivo mais antigo que o último carregado; confirmar com o Netezza</td></tr>
-    <tr><td><code>ERRO_DB2</code> no início (só com <code>db2_registrar_inicio = true</code>)</td><td>(fora do ar)</td><td>ficam em <code>raw/</code></td><td>Nada foi carregado. Ver a mensagem: Db2 fora do ar, <b>limite de conexões</b> do Db2 (reduzir <code>db2_max_conexoes</code> ou <code>max_simult</code> do JOB) ou driver <code>ibm_db</code> indisponível em máquina ARM (job independente). Resolver e desbloquear: o arquivo é processado do zero</td></tr>
-    <tr><td><code>ERRO_DB2</code> na conclusão</td><td>(sem linha; ou EM_PROCESSAMENTO com <code>db2_registrar_inicio</code>)</td><td>ficam em <code>raw/</code></td><td>Dados já estão no Delta. Resolver e desbloquear: o motor refaz <b>só a conclusão</b></td></tr>
-    <tr><td><code>ERRO_EXECUCAO</code></td><td>—</td><td>ficam em <code>raw/</code></td><td>Job independente caiu sem registrar o fim: ver no Jobs; desbloquear</td></tr>
+    <tr><td><code>ERRO_CTL</code> · <code>ERRO_PAR</code></td><td>ERRO</td><td><code>erro/</code></td><td>Pedir ao Netezza novo par com <b>nova data de geração</b>; desbloquear</td></tr>
+    <tr><td><code>ERRO_DAT_VAZIO</code></td><td>ERRO</td><td><code>erro/</code></td><td>DAT com 0 bytes ou só header: pedir reenvio; desbloquear</td></tr>
+    <tr><td><code>ERRO_CADASTRO</code></td><td>ERRO</td><td><code>erro/</code></td><td>Cadastrar o objeto (seção 9) ou corrigir a tag; devolver o par para <code>ctl/</code> e <code>dados/</code>; desbloquear</td></tr>
+    <tr><td><code>ERRO_SCHEMA</code></td><td>ERRO</td><td><code>erro/</code></td><td>Decisão humana: ajustar a tabela (9.6) ou pedir correção; devolver para <code>ctl/</code> e <code>dados/</code>; desbloquear</td></tr>
+    <tr><td><code>ERRO_DADOS</code></td><td>ERRO</td><td><code>erro/</code></td><td>A mensagem traz o motivo e a 1ª linha inválida; corrigir na origem e reenviar; desbloquear</td></tr>
+    <tr><td><code>ERRO_SEQUENCIA</code></td><td>ERRO</td><td><code>erro/</code></td><td>Chegou arquivo mais antigo que o último carregado; confirmar com o Netezza</td></tr>
+    <tr><td><code>ERRO_DB2</code> no início (só com <code>db2_registrar_inicio = true</code>)</td><td>(fora do ar)</td><td>ficam em <code>ctl/</code> e <code>dados/</code></td><td>Nada foi carregado. Ver a mensagem: Db2 fora do ar, <b>limite de conexões</b> do Db2 (reduzir <code>db2_max_conexoes</code> ou <code>max_simult</code> do JOB) ou driver <code>ibm_db</code> indisponível em máquina ARM (job independente). Resolver e desbloquear: o arquivo é processado do zero</td></tr>
+    <tr><td><code>ERRO_DB2</code> na conclusão</td><td>(sem linha; ou EM_PROCESSAMENTO com <code>db2_registrar_inicio</code>)</td><td>ficam em <code>ctl/</code> e <code>dados/</code></td><td>Dados já estão no Delta. Resolver e desbloquear: o motor refaz <b>só a conclusão</b></td></tr>
+    <tr><td><code>ERRO_EXECUCAO</code></td><td>—</td><td>ficam em <code>ctl/</code> e <code>dados/</code></td><td>Job independente caiu sem registrar o fim: ver no Jobs; desbloquear</td></tr>
   </table>
 <pre><span class="c">-- desbloquear (registra quem e por quê)</span>
 INSERT INTO plh.log_carga_evento (evento_ts, cod_objeto, status, mensagem, usuario)
 VALUES (current_timestamp(), 2001, 'DESBLOQUEIO', '&lt;motivo / chamado&gt;', current_user());</pre>
-<pre><span class="c"># devolver um par de error/ para raw/ (DAT primeiro, CTL por último: o CTL dispara o gatilho)</span>
+<pre><span class="c"># devolver um par de erro/ para ctl/ e dados/ (DAT primeiro, CTL por último: o CTL dispara o gatilho)</span>
 <span class="c"># landing_tipo = S3 (padrão): com a AWS CLI, no bucket da landing</span>
 L=s3://&lt;bucket&gt;/&lt;prefixo&gt;/netezza ; B=&lt;base_do_arquivo&gt;
-aws s3 mv $L/error/$B.dat $L/raw/data/$B.dat
-aws s3 mv $L/error/$B.CTL $L/raw/ctl/$B.CTL
-<span class="c"># (num notebook, vale para S3 e volume: dbutils.fs.mv(f"{L}/error/{B}.dat", f"{L}/raw/data/{B}.dat") e depois o CTL)</span>
+aws s3 mv $L/erro/$B.dat $L/dados/$B.dat
+aws s3 mv $L/erro/$B.CTL $L/ctl/$B.CTL
+<span class="c"># (num notebook, vale para S3 e volume: dbutils.fs.mv(f"{L}/erro/{B}.dat", f"{L}/dados/{B}.dat") e depois o CTL)</span>
 <span class="c"># landing_tipo = VOLUME: com a CLI do Databricks</span>
 L=dbfs:/Volumes/&lt;catalogo&gt;/&lt;schema&gt;/landing/netezza
-databricks fs cp $L/error/$B.dat $L/raw/data/$B.dat &amp;&amp; databricks fs rm $L/error/$B.dat
-databricks fs cp $L/error/$B.CTL $L/raw/ctl/$B.CTL &amp;&amp; databricks fs rm $L/error/$B.CTL</pre>
+databricks fs cp $L/erro/$B.dat $L/dados/$B.dat &amp;&amp; databricks fs rm $L/erro/$B.dat
+databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/erro/$B.CTL</pre>
   <div class="callout">Depois de um desbloqueio <b>sem</b> arquivo novo (ex.: ERRO_DB2), o <b>vigia</b> religa o despachante em até 15 min. Para não esperar, rode o job <b>PLHDWA · despachante</b> manualmente.</div>
 
   <h3>8.5 Reprocessar e desfazer</h3>
@@ -439,7 +439,7 @@ implantacao/ferramentas/cadastrar_em_lote.sh objetos.csv implantacao/netezza/exe
     <tr><th>Quero</th><th>Faça</th></tr>
     <tr><td>Mudar o modo de execução</td><td><code>ALTER TABLE … SET TAGS ('plhdwa_execucao' = 'JOB')</code> (vale no próximo ciclo)</td></tr>
     <tr><td>Desativar temporariamente</td><td><code>ALTER TABLE … UNSET TAGS ('plhdwa_cod_objeto')</code>: os próximos arquivos dão ERRO_CADASTRO</td></tr>
-    <tr><td>Coluna nova no arquivo</td><td>O objeto trava com ERRO_SCHEMA (por decisão). <code>ALTER TABLE … ADD COLUMN c TIPO AFTER col</code>, devolver o par para <code>raw/</code> e desbloquear</td></tr>
+    <tr><td>Coluna nova no arquivo</td><td>O objeto trava com ERRO_SCHEMA (por decisão). <code>ALTER TABLE … ADD COLUMN c TIPO AFTER col</code>, devolver o par para <code>ctl/</code> e <code>dados/</code> e desbloquear</td></tr>
   </table>
 </section>
 

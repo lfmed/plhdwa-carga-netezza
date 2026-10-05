@@ -197,8 +197,9 @@
     <tr><td>11</td><td>Bundle para o cliente, comentado e parametrizável (catálogo dos objetos e tudo)</td><td>Variáveis com descrição, targets dev/hml/prd, instalação pelo pós-deploy, pacote de entrega (seção 18)</td></tr>
     <tr><td>12</td><td>Detalhe do dashboard lista os jobs em processamento</td><td>Tabela “Jobs independentes em execução” (1 linha por job: execução, objeto, estado no Jobs, minutos rodando, arquivo atual, arquivos concluídos no job). Vem da foto <code>log_job_ativo</code>, gravada a cada ciclo do despachante com o mesmo horário do cartão: o job aparece também na fila do Jobs, arrancando e entre um arquivo e outro. O evento <code>ROTEADO</code> do job passou a levar a execução do job e a tabela destino</td></tr>
     <tr><td>13</td><td>Driver do Db2 vem no environment do job (serverless)</td><td>Environment <code>plhdwa</code> em todos os jobs (<code>ibm-db</code>, <code>databricks-sdk</code>, <code>pg8000</code>), sem <code>pip install</code> nos notebooks; versão do ambiente fixa em 1 (<code>serverless_ambiente</code>). Testada a versão mais nova (6) com <code>ibm-db</code>: 3 de 3 jobs falharam na instalação (máquina ARM); na versão 1, 14/14 em dois lotes</td></tr>
-    <tr><td>14</td><td>Não marcar mais na controle do Db2 que o arquivo iniciou; só sinalizar que finalizou (pedido do cliente)</td><td>Variável <code>db2_registrar_inicio</code> (padrão <code>false</code>): o Db2 recebe só <code>CONCLUIDO</code> ou <code>ERRO</code> (opção A: o erro também é um fim); o início fica no log (INICIADO) e no dashboard. Consequência: a carga não depende mais do Db2 para começar; com o Db2 fora, o arquivo é carregado e só a conclusão falha (<code>ERRO_DB2</code>, arquivos em <code>raw/</code>), e a retomada refaz só a conclusão, sem recarregar. Com <code>true</code> volta o comportamento anterior (sem o início no Db2, nada carrega)</td></tr>
+    <tr><td>14</td><td>Não marcar mais na controle do Db2 que o arquivo iniciou; só sinalizar que finalizou (pedido do cliente)</td><td>Variável <code>db2_registrar_inicio</code> (padrão <code>false</code>): o Db2 recebe só <code>CONCLUIDO</code> ou <code>ERRO</code> (opção A: o erro também é um fim); o início fica no log (INICIADO) e no dashboard. Consequência: a carga não depende mais do Db2 para começar; com o Db2 fora, o arquivo é carregado e só a conclusão falha (<code>ERRO_DB2</code>, arquivos em <code>ctl/</code> e <code>dados/</code>), e a retomada refaz só a conclusão, sem recarregar. Com <code>true</code> volta o comportamento anterior (sem o início no Db2, nada carrega)</td></tr>
     <tr><td>15</td><td>A landing no cliente é o S3, sem volume</td><td>Variável <code>landing_tipo</code>: <code>S3</code> (padrão, <code>landing = s3://&lt;bucket&gt;/&lt;prefixo&gt;</code>) ou <code>VOLUME</code> (<code>/Volumes/...</code>). No S3 o acesso passa pela external location do Unity Catalog (obrigatória no serverless), com file events para o gatilho e READ FILES/WRITE FILES para a identidade dos jobs. O motor confere se o caminho combina com o tipo; o resto do código é o mesmo (dbutils.fs e spark.read)</td></tr>
+    <tr><td>16</td><td>Pastas dentro do prefixo do S3: dados (.dat), ctl (.CTL), erro (arquivos com erro) e tmp (transformação temporária)</td><td>Variáveis <code>pasta_dat</code> (<code>dados</code>), <code>pasta_ctl</code> (<code>ctl</code>), <code>pasta_erro</code> (<code>erro</code>) e <code>pasta_tmp</code> (<code>tmp</code>). O gatilho do despachante olha só <code>ctl/</code>; o motor lê <code>dados/</code> e <code>ctl/</code>, move o par com erro para <code>erro/</code> e não lê nem grava em <code>tmp/</code> (só confere que as 4 são diferentes)</td></tr>
   </table>
   <div class="callout">Manual de operação, cadastro de novos arquivos e o cenário “1 arquivo → +10 → +300” ilustrado: <code>manual_operacao_plhdwa.html</code>.</div>
   <div class="callout">Cada notebook e função do ingestor, e a prova de que a carga FATO troca só a data (ou a data + instituições do CTL) e a DIM troca tudo: <code>documentacao_tecnica_plhdwa.html</code>.</div>
@@ -253,7 +254,7 @@
     <summary>Rodada 6 (T1–T3)</summary>
   <table style="margin-top:10px">
     <tr><th style="width:44px">#</th><th>Pergunta</th><th>Resposta</th><th>Impacto no desenho</th></tr>
-    <tr><td>T1</td><td>Db2 falhou de forma persistente após a carga</td><td>Falhar o job e não processar mais arquivos desse objeto até alguém resolver</td><td>Evento ERRO_DB2 → execução falha, objeto travado, alerta. Dados permanecem no Delta; arquivos ficam em <code>raw/</code>. Após o DESBLOQUEIO, refaz só a confirmação.</td></tr>
+    <tr><td>T1</td><td>Db2 falhou de forma persistente após a carga</td><td>Falhar o job e não processar mais arquivos desse objeto até alguém resolver</td><td>Evento ERRO_DB2 → execução falha, objeto travado, alerta. Dados permanecem no Delta; arquivos ficam em <code>ctl/</code> e <code>dados/</code>. Após o DESBLOQUEIO, refaz só a confirmação.</td></tr>
     <tr><td>T2</td><td>Formato da tag</td><td>Tag OWNER – PLHPWA</td><td>Chave <code>OWNER</code>. Valor aplicado: <code>PLHDWA</code>, pendente de confirmação (U1), porque a resposta diz PLHPWA e as anteriores, PLHDWA.</td></tr>
     <tr><td>T3</td><td>Disponibilidade do Db2 na janela</td><td>Não se preocupar</td><td>Fora do escopo; risco R24 registrado como aceito.</td></tr>
   </table>
@@ -310,7 +311,7 @@
       <tr><td>Instituições</td><td>Listada sem linhas é apagada; fora da lista = erro; DIM não tem lista.</td></tr>
       <tr><td>Ordem</td><td>Por data de geração, em série dentro do objeto, em paralelo entre objetos; arquivo antigo depois de um novo não ocorre (checagem defensiva mantida).</td></tr>
       <tr><td>Destino</td><td>Delta (Iceberg quando houver consumidor); colunas de data/instituição no cadastro; DIM sem histórico; coluna nova = erro.</td></tr>
-      <tr><td>Operação</td><td>Trava por objeto; sucesso apaga CTL e DAT; erro move para <code>error/</code>; janela 00h–09h; confirmação Db2 via JDBC; o job usa o cadastro do Databricks; sem dependência de carga entre objetos.</td></tr>
+      <tr><td>Operação</td><td>Trava por objeto; sucesso apaga CTL e DAT; erro move para <code>erro/</code>; janela 00h–09h; confirmação Db2 via JDBC; o job usa o cadastro do Databricks; sem dependência de carga entre objetos.</td></tr>
     </table>
   </details>
 </section>
@@ -361,31 +362,31 @@
 
     <!-- S3 -->
     <rect x="286" y="100" width="218" height="80" rx="9" class="box"/>
-    <text x="300" y="124" class="t">netezza/raw/ctl/</text>
+    <text x="300" y="124" class="t">netezza/ctl/</text>
     <text x="300" y="142" class="s mono">1230_FATPARCELA_..._.CTL</text>
     <text x="300" y="158" class="s">monitorado pelo despachante</text>
     <text x="300" y="172" class="s">(External Location + file events)</text>
 
     <rect x="286" y="225" width="218" height="80" rx="9" class="box"/>
-    <text x="300" y="249" class="t">netezza/raw/data/</text>
+    <text x="300" y="249" class="t">netezza/dados/</text>
     <text x="300" y="267" class="s mono">1230_FATPARCELA_..._.dat</text>
     <text x="300" y="283" class="s">CSV com aspas · até 150 GB</text>
     <text x="300" y="297" class="s">DAT vazio = ERRO_DAT_VAZIO</text>
 
     <rect x="286" y="345" width="218" height="60" rx="9" class="box"/>
-    <text x="300" y="368" class="t">netezza/error/</text>
+    <text x="300" y="368" class="t">netezza/erro/</text>
     <text x="300" y="386" class="s">CTL + DAT com erro</text>
     <text x="300" y="399" class="s">aguardando análise</text>
 
     <text x="296" y="440" class="al">⑧ sucesso: apaga após controle OK</text>
     <text x="296" y="456" class="s">CTL primeiro, depois DAT</text>
-    <text x="296" y="480" class="al">⑧ erro: move p/ error/</text>
+    <text x="296" y="480" class="al">⑧ erro: move p/ erro/</text>
     <text x="296" y="496" class="s">CTL primeiro, depois DAT</text>
 
     <!-- Databricks -->
     <rect x="562" y="84" width="364" height="156" rx="10" class="box dbx"/>
     <text x="578" y="106" class="t">Despachante · 1 execução = 1 lote</text>
-    <text x="578" y="124" class="s">⚡ File Arrival em raw/ctl · serverless Performance Optimized</text>
+    <text x="578" y="124" class="s">⚡ File Arrival em ctl · serverless Performance Optimized</text>
     <text x="578" y="146" class="s">• modo do objeto pela tag plhdwa_execucao</text>
     <text x="578" y="163" class="s">• DESPACHANTE: 1 thread por arquivo (24 vagas)</text>
     <text x="578" y="180" class="s">• JOB: run_now do job do tipo da tag (24 vagas)</text>
@@ -400,7 +401,7 @@
     <text x="578" y="341" class="s">• compute isolado; arranque 1× por objeto (até 20 arq.)</text>
     <text x="578" y="358" class="s">• mesmo código das threads do despachante</text>
     <text x="578" y="375" class="s">• controle: CONCLUIDO | ERRO (fim)</text>
-    <text x="578" y="392" class="s">• log → apaga / error/</text>
+    <text x="578" y="392" class="s">• log → apaga / erro/</text>
     <text x="578" y="409" class="s">• tag OWNER = PLHDWA</text>
 
     <rect x="562" y="448" width="172" height="66" rx="9" class="box"/>
@@ -497,7 +498,7 @@
   <div class="states">
     <span class="arr">desvios:</span>
     <span class="st err">ERRO_CTL · PAR · DAT_VAZIO · CADASTRO · SEQUENCIA · SCHEMA · DADOS → controle ERRO</span>
-    <span class="arr">→</span><span class="st blk">EM error/ · OBJETO TRAVADO</span><span class="arr">→</span><span class="st">DESBLOQUEIO</span>
+    <span class="arr">→</span><span class="st blk">EM erro/ · OBJETO TRAVADO</span><span class="arr">→</span><span class="st">DESBLOQUEIO</span>
     <span class="st err">ERRO_DB2 (falha persistente no Db2 · trava)</span><span class="st err">ERRO_EXECUCAO (job independente caiu sem registrar evento)</span>
   </div>
 </section>
@@ -506,7 +507,7 @@
 <section id="passos">
   <h2><span class="n">5</span>Passo a passo</h2>
   <ol class="steps">
-    <li><h4>Exportação <span class="who nz">Netezza · AWS</span></h4><p>O próprio Netezza grava o DAT em <code>raw/data/</code> e depois o CTL em <code>raw/ctl/</code>, em ordem de data de geração.</p></li>
+    <li><h4>Exportação <span class="who nz">Netezza · AWS</span></h4><p>O próprio Netezza grava o DAT em <code>dados/</code> e depois o CTL em <code>ctl/</code>, em ordem de data de geração.</p></li>
     <li><h4>Disparo e lote <span class="who dbx">File Arrival</span></h4><p>O gatilho inicia o despachante (ou enfileira, se já houver um rodando). A execução é um <b>lote</b>: <code>log_lote</code> recebe INICIADO com os pendentes.</p></li>
     <li><h4>Ciclo do despachante</h4><p>A cada <code>ciclo_s</code> (~5–10 s): relê <code>ctl_execucao</code>, a pasta e os jobs; descarta concluídos e objetos travados ou já em processamento; agrupa por objeto e ordena por data de geração. <b>Entre um ciclo e outro</b>, cada vaga que libera é preenchida na hora com o que já está em memória.</p></li>
     <li><h4>Modo de execução e prioridade</h4><p>Tag <code>plhdwa_execucao</code>: <b>DESPACHANTE</b> → 1 thread para <b>1 arquivo</b>, que devolve a vaga ao terminar; <b>JOB</b> → <code>run_now</code> do job do tipo da tag <code>plhdwa_tipo_job</code>, que segue com os próximos arquivos do mesmo objeto. Vai primeiro o objeto com mais trabalho pendente. Sem vaga no modo, o objeto espera a próxima vaga.</p></li>
@@ -516,7 +517,7 @@
     <li><h4>Carga atômica <span class="who dbx">Delta</span></h4><p>Leitura, validação e escrita na mesma leitura. FATO: <code>REPLACE WHERE</code> data (+ instituições); DIM: substitui tudo. Um commit.</p></li>
     <li><h4>Controle: conclusão <span class="who db2">Db2</span></h4><p>Grava <code>CONCLUIDO</code> com quantidade de registros, início e fim. Se falhar: <code>ERRO_DB2</code>, os dados ficam e só a conclusão é refeita depois do desbloqueio.</p></li>
     <li><h4>Log e remoção <span class="who s3">S3</span></h4><p>Log CARREGADO, CONFIRMADO_DB2 e CONCLUIDO (com quantidade, início e fim); apaga o CTL e depois o DAT.</p></li>
-    <li><h4>Em erro</h4><p>Log ERRO_* + controle <code>ERRO</code> com a mensagem + arquivos para <code>error/</code> (exceto ERRO_DB2/EXECUCAO) + objeto travado até o DESBLOQUEIO. Os outros objetos seguem.</p></li>
+    <li><h4>Em erro</h4><p>Log ERRO_* + controle <code>ERRO</code> com a mensagem + arquivos para <code>erro/</code> (exceto ERRO_DB2/EXECUCAO) + objeto travado até o DESBLOQUEIO. Os outros objetos seguem.</p></li>
     <li><h4>Fim do lote</h4><p>Sem pendentes nem nada rodando: <code>log_lote</code> FINALIZADO. Com erro no lote, a execução termina FAILED para notificar.</p></li>
   </ol>
 </section>
@@ -641,16 +642,16 @@ v_arquivo_concluido · v_projecao_termino</pre>
   <p class="lead">Todo erro: evento ERRO_* no log, controle <code>ERRO</code> com a mensagem (melhor esforço) e o objeto travado até um DESBLOQUEIO. Os outros objetos do lote seguem; o lote termina CONCLUIDO_COM_ERROS e a execução FAILED, para notificar.</p>
   <table>
     <tr><th>Tipo</th><th>Detecção</th><th>Quando</th><th>Arquivos</th></tr>
-    <tr><td><b>ERRO_CTL</b></td><td>CTL × nome, data inválida, DIM com lista de instituições</td><td>Antes da carga</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_PAR</b></td><td>CTL sem DAT</td><td>Antes da carga</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_DAT_VAZIO</b></td><td>DAT com 0 bytes, só header ou em branco</td><td>Antes da carga (evita apagar a data com REPLACE WHERE vazio)</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_CADASTRO</b></td><td>Código sem tabela, ou mais de uma tabela com a tag</td><td>Antes da carga</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_SEQUENCIA</b></td><td>Geração ≤ última carregada do objeto</td><td>Antes da carga</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_SCHEMA</b></td><td>Header ≠ layout (coluna nova, removida, renomeada)</td><td>Pré-checagem</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_DADOS</b></td><td>Nº de campos, tipo, data ≠ CTL, instituição fora da lista · a mensagem traz o motivo e a 1ª linha inválida</td><td>Pré-checagem ou carga (antes do commit)</td><td><code>error/</code></td></tr>
-    <tr><td><b>ERRO_DB2</b> (início, só com <code>db2_registrar_inicio = true</code>)</td><td>Controle não registrou EM_PROCESSAMENTO (Db2 fora, limite de conexões, driver indisponível)</td><td>Antes da carga: nada carregado</td><td>ficam em <code>raw/</code></td></tr>
-    <tr><td><b>ERRO_DB2</b> (conclusão)</td><td>Controle não registrou CONCLUIDO após 3 tentativas. No padrão (Db2 só recebe o fim), é aqui que um Db2 fora aparece</td><td>Depois do commit: dados no Delta; a retomada refaz só a conclusão</td><td>ficam em <code>raw/</code></td></tr>
-    <tr><td><b>ERRO_EXECUCAO</b></td><td>Job independente terminou sem evento final</td><td>Detectado pelo despachante</td><td>ficam em <code>raw/</code></td></tr>
+    <tr><td><b>ERRO_CTL</b></td><td>CTL × nome, data inválida, DIM com lista de instituições</td><td>Antes da carga</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_PAR</b></td><td>CTL sem DAT</td><td>Antes da carga</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_DAT_VAZIO</b></td><td>DAT com 0 bytes, só header ou em branco</td><td>Antes da carga (evita apagar a data com REPLACE WHERE vazio)</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_CADASTRO</b></td><td>Código sem tabela, ou mais de uma tabela com a tag</td><td>Antes da carga</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_SEQUENCIA</b></td><td>Geração ≤ última carregada do objeto</td><td>Antes da carga</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_SCHEMA</b></td><td>Header ≠ layout (coluna nova, removida, renomeada)</td><td>Pré-checagem</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_DADOS</b></td><td>Nº de campos, tipo, data ≠ CTL, instituição fora da lista · a mensagem traz o motivo e a 1ª linha inválida</td><td>Pré-checagem ou carga (antes do commit)</td><td><code>erro/</code></td></tr>
+    <tr><td><b>ERRO_DB2</b> (início, só com <code>db2_registrar_inicio = true</code>)</td><td>Controle não registrou EM_PROCESSAMENTO (Db2 fora, limite de conexões, driver indisponível)</td><td>Antes da carga: nada carregado</td><td>ficam em <code>ctl/</code> e <code>dados/</code></td></tr>
+    <tr><td><b>ERRO_DB2</b> (conclusão)</td><td>Controle não registrou CONCLUIDO após 3 tentativas. No padrão (Db2 só recebe o fim), é aqui que um Db2 fora aparece</td><td>Depois do commit: dados no Delta; a retomada refaz só a conclusão</td><td>ficam em <code>ctl/</code> e <code>dados/</code></td></tr>
+    <tr><td><b>ERRO_EXECUCAO</b></td><td>Job independente terminou sem evento final</td><td>Detectado pelo despachante</td><td>ficam em <code>ctl/</code> e <code>dados/</code></td></tr>
   </table>
 </section>
 
@@ -872,6 +873,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
     <tr><td>Job “testar controle Db2”: EM_PROCESSAMENTO → CONCLUIDO e EM_PROCESSAMENTO → ERRO na mesma linha</td><td>4 gravações em 0,6 s; linhas de teste apagadas</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Decisão 14 (Db2 só recebe o fim), 05/10: arquivo normal, arquivo com erro e Db2 fora + retomada</td><td>Controle só com CONCLUIDO (normal) e ERRO (erro), nenhum EM_PROCESSAMENTO/EXECUTANDO no Db2; com o Db2 fora o arquivo carregou, deu ERRO_DB2 na conclusão e ficou em raw/; após o DESBLOQUEIO, a retomada gravou CONCLUIDO sem novo commit na tabela</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Decisão 15 (landing direto no S3), 05/10: Netezza simulado gravando no bucket (DATs, depois CTLs), FATO, DIM e um arquivo com erro</td><td>Gatilho do despachante disparou pela chegada do CTL no S3 (external location sem file events: ~1 min); FATO e DIM carregadas com as linhas dos arquivos; concluídos apagados do bucket; o par com ERRO_DADOS foi para s3://…/error/</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 16 (pastas dados/ctl/erro/tmp no S3), 05/10: FATO, DIM, um arquivo com erro e um arquivo em tmp/</td><td>Gatilho disparou pela chegada em ctl/; FATO e DIM carregadas; concluídos apagados de ctl/ e dados/; o par com ERRO_DADOS foi para erro/; o arquivo em tmp/ ficou intacto e não disparou nada</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Ponta a ponta: 44 arquivos em 3 lotes</td><td>44 linhas CONCLUIDO na controle, com início e fim; depois apagadas</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Limite de conexões do Db2 (15) com 22 threads</td><td>sem pool: 7 ERRO_DB2 no início (nada carregado); com pool de 8: 22 objetos em paralelo, 1,8 min, 0 erros</td><td><span class="pill p-ok">Aprovado após correção</span></td></tr>
     <tr><td>Job independente em máquina ARM (aarch64)</td><td>ibm_db não instala → ERRO_DB2 claro, sem carga (3 de 3 jobs no teste). Environment fixo na versão 1: 14/14 em dois lotes (3 jobs, 1 por objeto, 2,03 milhões de registros, controle no Db2 confirmada). Versão 6 + <code>ibm-db</code>: 3 de 3 jobs falharam na instalação</td><td><span class="pill p-ok">Resolvido (W1)</span></td></tr>

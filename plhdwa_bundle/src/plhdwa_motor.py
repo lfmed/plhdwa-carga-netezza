@@ -6,7 +6,7 @@ Fluxo de um arquivo (processar_arquivo), igual no despachante (threads) e nos jo
   -> [controle: EM_PROCESSAMENTO, só com db2_registrar_inicio = true] -> sequência -> pré-checagem
   -> leitura + validação + carga atômica (1 commit)
   -> controle: CONCLUIDO (síncrono) -> apaga CTL e DAT -> log CONCLUIDO
-  Em erro: controle: ERRO (com a mensagem) + log ERRO_* + arquivos para error/ + objeto travado.
+  Em erro: controle: ERRO (com a mensagem) + log ERRO_* + arquivos para a pasta de erro + objeto travado.
 
 Modelo v2 (01/10/2026):
   - sem filas por tamanho: cada objeto diz onde roda, por tag na tabela destino
@@ -52,7 +52,12 @@ PARAMETROS = {
     "schema":             ("",                 "schema das tabelas operacionais"),
     "catalogos_objetos":  ("",                 "catálogos onde procurar as tabelas destino (pela tag plhdwa_cod_objeto), "
                                                "separados por vírgula; vazio = o mesmo de 'catalogo'"),
-    "landing":            ("",                 "pasta raiz da landing: raw/data, raw/ctl e error (s3://... ou /Volumes/...)"),
+    "landing":            ("",                 "prefixo da landing (s3://... ou /Volumes/...); as pastas abaixo ficam dentro dele"),
+    "pasta_dat":          ("dados",            "pasta dos arquivos .dat, dentro de landing"),
+    "pasta_ctl":          ("ctl",              "pasta dos arquivos .CTL, dentro de landing (o gatilho do despachante olha esta)"),
+    "pasta_erro":         ("erro",             "pasta para onde o motor move o par com erro de negócio, dentro de landing"),
+    "pasta_tmp":          ("tmp",              "pasta de trabalho temporário do cliente, dentro de landing (o motor não lê "
+                                               "nem grava nela; só confere que é diferente das outras)"),
     "landing_tipo":       ("S3",               "S3 = direto no bucket (s3://..., via external location do Unity Catalog); "
                                                "VOLUME = volume do Unity Catalog (/Volumes/...)"),
     "fuso_horario":       ("America/Sao_Paulo", "fuso das datas de geração dos nomes de arquivo e dos horários do log"),
@@ -101,7 +106,8 @@ PARAMETROS = {
 
 
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
-COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "landing_tipo", "fuso_horario",
+COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
+          "pasta_tmp", "fuso_horario",
           "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
@@ -147,6 +153,15 @@ def validar_landing():
     if caminho and not caminho.startswith(esperado[tipo]):
         raise ValueError(f"landing_tipo = {tipo} exige landing começando com {esperado[tipo]} (veio {caminho!r})")
     CTX["landing_tipo"] = tipo
+    # Pastas dentro da landing: nomes simples (podem ter subpasta, ex.: entrada/dados) e todas diferentes,
+    # para o gatilho (que olha pasta_ctl) não disparar com arquivo de outra pasta.
+    pastas = {k: str(CTX[k]).strip("/") for k in ("pasta_dat", "pasta_ctl", "pasta_erro", "pasta_tmp")}
+    for k, v in pastas.items():
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*", v):
+            raise ValueError(f"{k} inválida: {v!r}")
+    if len(set(pastas.values())) != len(pastas):
+        raise ValueError(f"pastas da landing precisam ser diferentes: {pastas}")
+    CTX.update(pastas)
 
 
 def fq(nome):
@@ -277,7 +292,7 @@ def ler_nome(nome_ctl):
     base = nome_ctl[:-4]
     return {"cod": int(m.group(1)), "tabela_nome": m.group(2), "dt_mov": m.group(3), "dt_ger": m.group(4),
             "base": base, "nome_ctl": nome_ctl, "nome_dat": base + ".dat",
-            "ctl": pasta(f"raw/ctl/{nome_ctl}"), "dat": pasta(f"raw/data/{base}.dat")}
+            "ctl": pasta(f"{CTX['pasta_ctl']}/{nome_ctl}"), "dat": pasta(f"{CTX['pasta_dat']}/{base}.dat")}
 
 
 def _ls(caminho):
@@ -289,7 +304,7 @@ def _ls(caminho):
 
 def tamanhos_dat():
     """Tamanho em bytes de cada DAT, direto da listagem (sem abrir o arquivo)."""
-    return {f.name: f.size for f in _ls(pasta("raw/data"))}
+    return {f.name: f.size for f in _ls(pasta(CTX["pasta_dat"]))}
 
 
 def status_por_arquivo(nomes):
@@ -304,9 +319,9 @@ def objetos_travados():
 
 
 def pendentes(cod=None):
-    """CTLs em raw/ctl ainda não concluídos, de objetos não travados, agrupados por objeto e em ordem de geração.
+    """CTLs da pasta de CTL ainda não concluídos, de objetos não travados, agrupados por objeto e em ordem de geração.
     cod: só os desse objeto (usado pelo job independente para seguir com o próximo arquivo do mesmo objeto)."""
-    arqs = [a for a in (ler_nome(f.name) for f in _ls(pasta("raw/ctl"))) if a and (cod is None or a["cod"] == cod)]
+    arqs = [a for a in (ler_nome(f.name) for f in _ls(pasta(CTX["pasta_ctl"]))) if a and (cod is None or a["cod"] == cod)]
     st = status_por_arquivo([a["nome_ctl"] for a in arqs])
     travados = objetos_travados()
     grupos = {}
@@ -333,10 +348,10 @@ def apagar_par(arq):
 
 
 def mover_para_erro(arq):
-    """Erro de negócio: move o CTL primeiro, depois o DAT (se existir)."""
+    """Erro de negócio: move o CTL primeiro, depois o DAT (se existir), para a pasta de erro (pasta_erro)."""
     for origem, nome in ((arq["ctl"], arq["nome_ctl"]), (arq["dat"], arq["nome_dat"])):
         try:
-            CTX["dbutils"].fs.mv(origem, pasta(f"error/{nome}"))
+            CTX["dbutils"].fs.mv(origem, pasta(f"{CTX['pasta_erro']}/{nome}"))
         except Exception:
             pass   # DAT ausente (ERRO_PAR)
 
@@ -960,7 +975,7 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
             tipo, msg = classificar(e)
             mover = tipo == "ERRO_DADOS"
         if carregou:
-            mover = False                               # dados já no Delta: arquivos ficam em raw/ para a retomada
+            mover = False                               # dados já no Delta: arquivos ficam nas pastas de entrada para a retomada
         fim = time.time()
         eventos(pend + [(arq, tipo, {**comum(), "inicio": inicio, "fim": fim, "mensagem": msg})])
         # 3) controle: este arquivo deu erro (melhor esforço: se a própria controle estiver fora, só registra no log)

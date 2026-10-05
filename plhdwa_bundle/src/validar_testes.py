@@ -136,21 +136,21 @@ ok_esp = {int(r["cod_objeto"]) for r in manifesto if r["resultado_esperado"] == 
 registrar("erros", "objetos com erro estão travados", erro_esp <= travados, erro_esp - travados)
 registrar("erros", "objetos sem erro não estão travados", not (ok_esp & travados), ok_esp & travados)
 
-# 9) Arquivos: concluídos apagados; erros de negócio em error/; ERRO_DB2 continua em raw/
+# 9) Arquivos: concluídos apagados; erros de negócio na pasta de erro; ERRO_DB2 continua nas pastas de entrada
 def existe(c):
     try:
         dbutils.fs.ls(c); return True
     except Exception:
         return False
-land = P["landing"].rstrip("/")
+d_ctl, d_dat, d_erro = (m.pasta(m.CTX[k]) for k in ("pasta_ctl", "pasta_dat", "pasta_erro"))
 for r in manifesto:
     n, st = r["arquivo_ctl"], status.get(r["arquivo_ctl"])
     if st == "CONCLUIDO":
-        registrar(r["cenario"], f"{n} apagado da landing", not existe(f"{land}/raw/ctl/{n}") and not existe(f"{land}/raw/data/{n[:-4]}.dat"))
+        registrar(r["cenario"], f"{n} apagado da landing", not existe(f"{d_ctl}/{n}") and not existe(f"{d_dat}/{n[:-4]}.dat"))
     elif st in ("ERRO_DB2", "ERRO_EXECUCAO"):
-        registrar(r["cenario"], f"{n} mantido em raw/", existe(f"{land}/raw/ctl/{n}"))
+        registrar(r["cenario"], f"{n} mantido na pasta de CTL", existe(f"{d_ctl}/{n}"))
     elif st and st.startswith("ERRO"):
-        registrar(r["cenario"], f"{n} movido para error/", existe(f"{land}/error/{n}") and not existe(f"{land}/raw/ctl/{n}"))
+        registrar(r["cenario"], f"{n} movido para a pasta de erro", existe(f"{d_erro}/{n}") and not existe(f"{d_ctl}/{n}"))
 
 # 10) Metadados preservados depois das cargas (tags e TBLPROPERTIES na tabela destino)
 for t, cod in [("teste_fato_9001", "9001"), ("teste_dim_9110", "9110"), ("fat_parcela", "1230")]:

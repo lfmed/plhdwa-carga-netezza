@@ -8,7 +8,7 @@ resources:
   jobs:
 
     # -------------------------------------------------------------------------------------------------
-    # Despachante: disparado pela chegada de CTL em raw/ctl/. Cada execução = 1 lote (1 por vez; disparos
+    # Despachante: disparado pela chegada de CTL na pasta pasta_ctl da landing. Cada execução = 1 lote (1 por vez; disparos
     # durante o lote esperam na fila do Jobs). Objetos DESPACHANTE rodam aqui (threads, 1 arquivo por vaga);
     # objetos JOB disparam os jobs de carga abaixo.
     plhdwa_despachante:
@@ -19,7 +19,7 @@ resources:
       queue: {enabled: true}
       trigger:
         file_arrival:
-          url: ${var.landing}/raw/ctl/
+          url: ${var.landing}/${var.pasta_ctl}/
           min_time_between_triggers_seconds: ${var.gatilho_intervalo_s}
       email_notifications:
         on_failure: ["${var.email_alertas}"]
@@ -29,6 +29,10 @@ resources:
         - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
+        - {name: pasta_dat, default: "${var.pasta_dat}"}
+        - {name: pasta_ctl, default: "${var.pasta_ctl}"}
+        - {name: pasta_erro, default: "${var.pasta_erro}"}
+        - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -96,6 +100,10 @@ resources:
         - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
+        - {name: pasta_dat, default: "${var.pasta_dat}"}
+        - {name: pasta_ctl, default: "${var.pasta_ctl}"}
+        - {name: pasta_erro, default: "${var.pasta_erro}"}
+        - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -164,6 +172,10 @@ resources:
         - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
+        - {name: pasta_dat, default: "${var.pasta_dat}"}
+        - {name: pasta_ctl, default: "${var.pasta_ctl}"}
+        - {name: pasta_erro, default: "${var.pasta_erro}"}
+        - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: vigia_parado_min, default: "${var.vigia_parado_min}"}
         - {name: despachante_job_id, default: "${resources.jobs.plhdwa_despachante.id}"}
@@ -214,6 +226,10 @@ resources:
         - {name: schema, default: "${var.schema}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
+        - {name: pasta_dat, default: "${var.pasta_dat}"}
+        - {name: pasta_ctl, default: "${var.pasta_ctl}"}
+        - {name: pasta_erro, default: "${var.pasta_erro}"}
+        - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -251,6 +267,10 @@ resources:
         - {name: schema, default: "${var.schema}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
+        - {name: pasta_dat, default: "${var.pasta_dat}"}
+        - {name: pasta_ctl, default: "${var.pasta_ctl}"}
+        - {name: pasta_erro, default: "${var.pasta_erro}"}
+        - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -279,7 +299,8 @@ resources:
       tags: {OWNER: "${var.owner_tag}"}
       parameters:
         - {name: landing, default: "${var.landing}"}
-        - {name: landing_tipo, default: "${var.landing_tipo}"}
+        - {name: pasta_dat, default: "${var.pasta_dat}"}
+        - {name: pasta_ctl, default: "${var.pasta_ctl}"}
         - {name: tamanho_mb, default: "5120"}
         - {name: cod_objeto, default: "9050"}
       environments: *ambiente_plhdwa

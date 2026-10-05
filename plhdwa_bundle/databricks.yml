@@ -34,9 +34,24 @@ variables:
     default: S3
   landing:
     description: >-
-      Pasta raiz da landing, com as subpastas raw/data, raw/ctl e error. Com landing_tipo = S3:
+      Prefixo da landing; as pastas pasta_dat, pasta_ctl, pasta_erro e pasta_tmp ficam dentro dele. Com landing_tipo = S3:
       s3://<bucket>/<prefixo> (precisa de uma external location com file events cobrindo o caminho; a identidade
       dos jobs precisa de READ FILES e WRITE FILES nela). Com VOLUME: /Volumes/<catalogo>/<schema>/<volume>/<pasta>.
+  pasta_dat:
+    description: >-
+      Pasta dos arquivos .dat, dentro de landing (por exemplo s3://<bucket>/<prefixo>/dados)
+    default: dados
+  pasta_ctl:
+    description: Pasta dos arquivos .CTL, dentro de landing. O gatilho do despachante olha esta pasta.
+    default: ctl
+  pasta_erro:
+    description: Pasta para onde o motor move o par (CTL e DAT) com erro de negócio, dentro de landing
+    default: erro
+  pasta_tmp:
+    description: >-
+      Pasta de trabalho temporário do cliente, dentro de landing. O motor não lê nem grava nela (só confere que
+      é diferente das outras); como o gatilho olha só pasta_ctl, arquivos aqui não disparam nada.
+    default: tmp
   warehouse_id:
     description: SQL warehouse dos dashboards
   fuso_horario:
@@ -179,7 +194,7 @@ targets:
       host: https://<workspace-dev>.cloud.databricks.com
     variables:
       catalogo: <catalogo_dev>
-      landing: s3://<bucket_dev>/<prefixo>/netezza
+      landing: s3://<bucket_dev>/<prefixo>
       warehouse_id: <warehouse_id_dev>
       db2_host: <host_db2_dev>
       db2_porta: "<porta>"
@@ -193,7 +208,7 @@ targets:
       host: https://<workspace-hml>.cloud.databricks.com
     variables:
       catalogo: <catalogo_hml>
-      landing: s3://<bucket_hml>/<prefixo>/netezza
+      landing: s3://<bucket_hml>/<prefixo>
       warehouse_id: <warehouse_id_hml>
       db2_host: <host_db2_hml>
       db2_porta: "<porta>"
@@ -208,7 +223,7 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalogo: <catalogo_prd>
-      landing: s3://<bucket_prd>/<prefixo>/netezza
+      landing: s3://<bucket_prd>/<prefixo>
       warehouse_id: <warehouse_id_prd>
       db2_host: <host_db2_prd>
       db2_porta: "<porta>"
