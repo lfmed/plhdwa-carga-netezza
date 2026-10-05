@@ -1,6 +1,6 @@
 # PLHDWA · motor de carga Netezza → Databricks (Databricks Asset Bundle)
 
-O Netezza grava um `.dat` e depois um `.CTL` num volume (bucket S3). A chegada do CTL dispara o **despachante**:
+O Netezza grava um `.dat` e depois um `.CTL` direto no bucket S3 (ou num volume do Unity Catalog, variável `landing_tipo`). A chegada do CTL dispara o **despachante**:
 cada execução dele é um **lote**. Cada arquivo é validado, carregado num único commit Delta na tabela destino
 (REPLACE WHERE na FATO, substituição total na DIM) e registra na **controle do Db2** o fim:
 a conclusão (`CONCLUIDO`, com a quantidade) ou o erro (`ERRO`, com a mensagem). O início fica no log do Databricks
@@ -36,8 +36,24 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
 
 1. **Databricks CLI** ≥ 0.250 autenticada no workspace (`databricks auth login --host <workspace>`).
 2. **Catálogo** do Unity Catalog para as tabelas operacionais (variável `catalogo`). O schema é criado pelo pós-deploy.
-3. **Volume da landing** (variável `landing`). Em produção, um **volume externo** sobre o bucket S3 em que o
-   Netezza grava, com *file events* habilitados na External Location. Subpastas: `raw/data`, `raw/ctl`, `error`.
+3. **Landing** (variáveis `landing_tipo` e `landing`), com as subpastas `raw/data`, `raw/ctl` e `error`:
+   - **`landing_tipo = S3` (padrão): direto no bucket** em que o Netezza grava, `landing = s3://<bucket>/<prefixo>`.
+     Não precisa de volume, mas no serverless todo acesso a S3 passa pelo Unity Catalog, então é preciso uma
+     **External Location** cobrindo o caminho:
+     1. role IAM com `s3:GetObject`, `PutObject`, `DeleteObject` e `ListBucket` no bucket/prefixo (o motor apaga os
+        concluídos e move os com erro para `error/`);
+     2. *storage credential* com essa role;
+     3. external location com **file events** habilitado (o gatilho do despachante fica rápido e escalável):
+        ```sql
+        CREATE EXTERNAL LOCATION netezza_landing URL 's3://<bucket>/<prefixo>' WITH (STORAGE CREDENTIAL <credencial>);
+        GRANT READ FILES, WRITE FILES ON EXTERNAL LOCATION netezza_landing TO `<identidade_dos_jobs>`;
+        ```
+     O caminho não pode se sobrepor a tabelas/volumes do Unity Catalog (use um prefixo só para a landing).
+   - **`landing_tipo = VOLUME`**: `landing = /Volumes/<catalogo>/<schema>/<volume>/<pasta>` (volume gerenciado ou
+     externo; `READ VOLUME` e `WRITE VOLUME` para a identidade dos jobs).
+   - O motor confere se `landing` combina com `landing_tipo` e para com mensagem clara se não combinar. O resto do
+     código é o mesmo nos dois casos (`dbutils.fs` e `spark.read`).
+   - O Netezza grava o `.dat` completo e **por último** o `.CTL` (o CTL é o sinal de que o par está pronto).
 4. **SQL warehouse** para os dashboards (variável `warehouse_id`).
 5. **Rede até o Db2**: os jobs serverless chegam no Db2 pela NCC (Network Connectivity Configuration) do
    workspace. Libere host e porta do Db2 para essa rota.
@@ -74,7 +90,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 
 | Grupo | Variáveis |
 |---|---|
-| Onde ficam as coisas | `catalogo`, `schema`, `catalogos_objetos` (catálogos das tabelas destino), `landing`, `warehouse_id`, `fuso_horario` |
+| Onde ficam as coisas | `catalogo`, `schema`, `catalogos_objetos` (catálogos das tabelas destino), `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
 | Controle (Db2) | `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
 | Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min` |
 | Governança | `owner_tag`, `grupo_owner`, `email_alertas` |
@@ -133,7 +149,8 @@ O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o m
 ## 7. Testar
 
 - `plhdwa_testar_controle_db2`: grava 2 arquivos fictícios (objeto 0) com o comando real e apaga no fim.
-- Arquivo real: copie um par DAT + CTL para `raw/data` e depois `raw/ctl` (o CTL dispara). Esperado: carga na
+- Arquivo real: copie um par DAT + CTL para `raw/data` e depois `raw/ctl` (o CTL dispara). No S3:
+  `aws s3 cp` (ou o próprio Netezza); `plhdwa_gerar_teste_tempo` também grava no S3 com `landing_tipo = S3`. Esperado: carga na
   tabela destino, `CONCLUIDO` em `v_status_arquivo`, linha `CONCLUIDO` na controle do Db2, arquivos apagados.
 - `plhdwa_validar_testes`: compara um manifesto (resultado esperado por arquivo) com o log e com a controle.
 

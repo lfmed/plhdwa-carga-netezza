@@ -52,7 +52,9 @@ PARAMETROS = {
     "schema":             ("",                 "schema das tabelas operacionais"),
     "catalogos_objetos":  ("",                 "catálogos onde procurar as tabelas destino (pela tag plhdwa_cod_objeto), "
                                                "separados por vírgula; vazio = o mesmo de 'catalogo'"),
-    "landing":            ("",                 "pasta raiz da landing (volume): raw/data, raw/ctl e error"),
+    "landing":            ("",                 "pasta raiz da landing: raw/data, raw/ctl e error (s3://... ou /Volumes/...)"),
+    "landing_tipo":       ("S3",               "S3 = direto no bucket (s3://..., via external location do Unity Catalog); "
+                                               "VOLUME = volume do Unity Catalog (/Volumes/...)"),
     "fuso_horario":       ("America/Sao_Paulo", "fuso das datas de geração dos nomes de arquivo e dos horários do log"),
     # --- controle (Db2) ---
     "db2_modo":           ("DB2",              "DB2 (controle no Db2 do cliente) ou SIMULADO (Lakebase, só para testes)"),
@@ -99,7 +101,7 @@ PARAMETROS = {
 
 
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
-COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "fuso_horario",
+COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "landing_tipo", "fuso_horario",
           "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
@@ -128,9 +130,23 @@ def iniciar(spark, dbutils, params):
     # Datas de geração vêm em horário de Brasília: a sessão inteira trabalha nesse fuso.
     spark.conf.set("spark.sql.session.timeZone", CTX["fuso_horario"])
     CTX["catalogos_objetos"] = [c.strip() for c in (CTX["catalogos_objetos"] or CTX["catalogo"]).split(",") if c.strip()]
+    validar_landing()
     for c in CTX["catalogos_objetos"] + [CTX["lakebase_tabela"], CTX["db2_tabela"] or "x"]:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", c):   # vão em SQL montado por texto: só nomes simples
             raise ValueError(f"nome inválido em parâmetro: {c!r}")
+
+
+def validar_landing():
+    """landing_tipo e o caminho da landing precisam combinar. O motor só usa dbutils.fs e spark.read na landing,
+    que funcionam igual nos dois casos; no S3, o acesso passa pela external location do Unity Catalog que cobre o
+    bucket/prefixo (a identidade do job precisa de READ FILES e WRITE FILES nela)."""
+    tipo, caminho = str(CTX["landing_tipo"]).upper(), str(CTX["landing"] or "")
+    esperado = {"S3": "s3://", "VOLUME": "/Volumes/"}
+    if tipo not in esperado:
+        raise ValueError(f"landing_tipo inválido: {tipo!r} (use S3 ou VOLUME)")
+    if caminho and not caminho.startswith(esperado[tipo]):
+        raise ValueError(f"landing_tipo = {tipo} exige landing começando com {esperado[tipo]} (veio {caminho!r})")
+    CTX["landing_tipo"] = tipo
 
 
 def fq(nome):

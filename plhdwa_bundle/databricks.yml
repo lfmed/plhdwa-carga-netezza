@@ -26,10 +26,17 @@ variables:
       Catálogos onde ficam as TABELAS DESTINO dos objetos (procuradas pela tag plhdwa_cod_objeto),
       separados por vírgula. Vazio = o mesmo catálogo das tabelas operacionais.
     default: ""
+  landing_tipo:
+    description: >-
+      Onde o Netezza grava os arquivos. S3 (padrão) = direto no bucket: landing = s3://<bucket>/<prefixo>, acessado
+      pela external location do Unity Catalog que cobre esse caminho (sem volume). VOLUME = volume do Unity Catalog:
+      landing = /Volumes/<catalogo>/<schema>/<volume>/<pasta>. O motor confere se landing combina com o tipo.
+    default: S3
   landing:
     description: >-
-      Pasta raiz da landing, num volume do Unity Catalog (em produção, volume externo sobre o bucket S3
-      do Netezza, com file events). Subpastas raw/data, raw/ctl e error.
+      Pasta raiz da landing, com as subpastas raw/data, raw/ctl e error. Com landing_tipo = S3:
+      s3://<bucket>/<prefixo> (precisa de uma external location com file events cobrindo o caminho; a identidade
+      dos jobs precisa de READ FILES e WRITE FILES nela). Com VOLUME: /Volumes/<catalogo>/<schema>/<volume>/<pasta>.
   warehouse_id:
     description: SQL warehouse dos dashboards
   fuso_horario:
@@ -172,7 +179,7 @@ targets:
       host: https://<workspace-dev>.cloud.databricks.com
     variables:
       catalogo: <catalogo_dev>
-      landing: /Volumes/<catalogo_dev>/<schema>/<volume>/netezza
+      landing: s3://<bucket_dev>/<prefixo>/netezza
       warehouse_id: <warehouse_id_dev>
       db2_host: <host_db2_dev>
       db2_porta: "<porta>"
@@ -186,7 +193,7 @@ targets:
       host: https://<workspace-hml>.cloud.databricks.com
     variables:
       catalogo: <catalogo_hml>
-      landing: /Volumes/<catalogo_hml>/<schema>/<volume>/netezza
+      landing: s3://<bucket_hml>/<prefixo>/netezza
       warehouse_id: <warehouse_id_hml>
       db2_host: <host_db2_hml>
       db2_porta: "<porta>"
@@ -201,7 +208,7 @@ targets:
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalogo: <catalogo_prd>
-      landing: /Volumes/<catalogo_prd>/<schema>/<volume_externo>/netezza
+      landing: s3://<bucket_prd>/<prefixo>/netezza
       warehouse_id: <warehouse_id_prd>
       db2_host: <host_db2_prd>
       db2_porta: "<porta>"

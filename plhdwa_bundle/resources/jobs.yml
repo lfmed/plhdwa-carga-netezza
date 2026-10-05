@@ -28,6 +28,7 @@ resources:
         - {name: schema, default: "${var.schema}"}
         - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
+        - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -94,6 +95,7 @@ resources:
         - {name: schema, default: "${var.schema}"}
         - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
+        - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -161,6 +163,7 @@ resources:
         - {name: schema, default: "${var.schema}"}
         - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
+        - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: vigia_parado_min, default: "${var.vigia_parado_min}"}
         - {name: despachante_job_id, default: "${resources.jobs.plhdwa_despachante.id}"}
@@ -210,6 +213,7 @@ resources:
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
         - {name: landing, default: "${var.landing}"}
+        - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -246,6 +250,7 @@ resources:
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
         - {name: landing, default: "${var.landing}"}
+        - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
@@ -274,6 +279,7 @@ resources:
       tags: {OWNER: "${var.owner_tag}"}
       parameters:
         - {name: landing, default: "${var.landing}"}
+        - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: tamanho_mb, default: "5120"}
         - {name: cod_objeto, default: "9050"}
       environments: *ambiente_plhdwa
