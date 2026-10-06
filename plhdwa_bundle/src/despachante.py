@@ -71,6 +71,7 @@ execucao = None
 listado_em = 0.0
 inicio = time.time()
 m.fechar_lotes_orfaos()                        # lote anterior que caiu/foi cancelado sai de "em andamento"
+m.limpar_tmp_orfaos()                          # arquivos limpos que sobraram em pasta_tmp de uma execução que caiu
 m.lote("INICIADO", pendentes=sum(len(v) for v in m.pendentes().values()))
 
 

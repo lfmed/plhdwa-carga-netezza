@@ -86,6 +86,14 @@ def main():
                    help="onde o objeto roda: dentro do despachante (threads) ou em job independente")
     p.add_argument("--tipo-job", choices=["PERFORMANCE_OPTIMIZED", "STANDARD"], default="PERFORMANCE_OPTIMIZED",
                    help="tipo do job independente (só vale com --execucao JOB)")
+    p.add_argument("--limpeza", choices=["true", "false"],
+                   help="sobrepõe a variável limpeza_dat só para esta tabela (plhdwa.arquivo.limpeza)")
+    p.add_argument("--limpeza-modo", choices=["AUTO", "DIRETA", "PARALELA", "MULTILINHA"],
+                   help="AUTO (padrão do motor) detecta por arquivo (sem multilinha = PARALELA); DIRETA = regex na própria leitura, sem tmp; "
+                        "PARALELA = tmp em partes; MULTILINHA = código do cliente (1 arquivo + multiLine)")
+    p.add_argument("--limpeza-multilinha", choices=["true", "false"],
+                   help="(antigo) true = MULTILINHA, false = PARALELA; prefira --limpeza-modo")
+    p.add_argument("--limpeza-quote", help="aspas dos textos no arquivo limpo (padrão do motor: aspas simples)")
     a = p.parse_args()
 
     ddl = open(a.ddl, encoding="utf-8").read()
@@ -120,6 +128,11 @@ def main():
         "plhdwa.arquivo.timestamp_format": a.timestamp_format,
         "plhdwa.arquivo.date_format": a.date_format,
     }
+    # limpeza do DAT (opcional por tabela; sem estas, vale a variável limpeza_dat e os padrões do motor)
+    for chave, valor in (("limpeza", a.limpeza), ("limpeza_modo", a.limpeza_modo),
+                         ("limpeza_multilinha", a.limpeza_multilinha), ("limpeza_quote", a.limpeza_quote)):
+        if valor is not None:
+            props[f"plhdwa.arquivo.{chave}"] = valor
     sql_str = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")   # escapa \ e ' no literal SQL
     props_sql = ",\n".join(f"  '{k}' = '{sql_str(v)}'" for k, v in props.items())
 

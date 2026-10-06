@@ -53,6 +53,8 @@ resources:
         - {name: db2_tentativas, default: "${var.db2_tentativas}"}
         - {name: db2_espera_base_s, default: "${var.db2_espera_base_s}"}
         - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
+        - {name: limpeza_dat, default: "${var.limpeza_dat}"}
+        - {name: limpeza_pedaco_mb, default: "${var.limpeza_pedaco_mb}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
         - {name: ciclo_s, default: "${var.ciclo_s}"}
@@ -124,6 +126,8 @@ resources:
         - {name: db2_tentativas, default: "${var.db2_tentativas}"}
         - {name: db2_espera_base_s, default: "${var.db2_espera_base_s}"}
         - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
+        - {name: limpeza_dat, default: "${var.limpeza_dat}"}
+        - {name: limpeza_pedaco_mb, default: "${var.limpeza_pedaco_mb}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
       environments: *ambiente_plhdwa
@@ -179,11 +183,16 @@ resources:
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: vigia_parado_min, default: "${var.vigia_parado_min}"}
         - {name: despachante_job_id, default: "${resources.jobs.plhdwa_despachante.id}"}
-      environments: *ambiente_plhdwa
+      # Ambiente leve: o vigia só lista a pasta de CTL e consulta/dispara o despachante (databricks-sdk já vem no
+      # serverless). Sem ibm-db/pg8000, não há instalação de bibliotecas no arranque.
+      environments:
+        - environment_key: plhdwa_leve
+          spec:
+            environment_version: "${var.serverless_ambiente}"
       tasks:
         - task_key: vigiar
           max_retries: 0
-          environment_key: plhdwa
+          environment_key: plhdwa_leve
           notebook_task:
             notebook_path: ../src/vigia.py
 
@@ -301,6 +310,7 @@ resources:
         - {name: landing, default: "${var.landing}"}
         - {name: pasta_dat, default: "${var.pasta_dat}"}
         - {name: pasta_ctl, default: "${var.pasta_ctl}"}
+        - {name: preparo, default: ""}           # landing no S3: pasta num volume para gerar o arquivo
         - {name: tamanho_mb, default: "5120"}
         - {name: cod_objeto, default: "9050"}
       environments: *ambiente_plhdwa

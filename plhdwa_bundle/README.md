@@ -127,6 +127,61 @@ python3 executar_sql.py cadastro/1230_fat_parcela.sql --warehouse <warehouse_id>
 ```
 O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o mesmo de `catalogo`).
 
+## 5b. Limpeza do DAT antes da carga (pedido do cliente)
+
+Com `limpeza_dat = true` (padrão), cada DAT passa por esta etapa antes da carga (`preparar_dat` no motor):
+
+1. lido linha a linha **com o encoding da tabela** (`plhdwa.arquivo.encoding`, LATIN9 do Netezza);
+2. as 3 regex do cliente, nesta ordem (as mesmas do código recebido, em `_RX_LIMPEZA`):
+   `r'\\(?![\\\'"|nrt])'` → vazio (barra que não escapa nada sai) · `r'\\\|'` → `|` · `r'\\null'` → vazio (NULL);
+3. gravado em `<landing>/<pasta_tmp>/<nome do arquivo>/` e lido para a carga com header, delimitador da tabela,
+   `multiLine`, aspas simples (`'`) e escape `\` (padrão do Spark), com o schema da tabela e `FAILFAST`;
+4. o arquivo limpo é **apagado no fim**, com sucesso ou com erro. Se uma execução cair no meio, o próximo lote apaga
+   a sobra (só pastas com nome de arquivo do motor; o resto da `tmp/` não é tocado).
+
+Ajustes em relação ao código recebido (medidos no teste com 6 milhões de registros, 13 partes):
+
+| Ajuste | Sem o ajuste |
+|---|---|
+| Arquivo limpo gravado **em 1 arquivo, na ordem original** (`coalesce(1)`) | o CSV com `header=True` descartou a 1ª linha de cada parte: **12 registros perdidos**; registro com quebra de linha pode ser cortado entre partes |
+| Leitura com o **encoding da tabela** (CSV de uma coluna) | `spark.read.text` só lê UTF-8: **todos os acentos LATIN9 corrompidos** (852.857 registros) |
+| `wholeFile` removido | opção inexistente no leitor de texto (era ignorada) |
+| Schema da tabela + `FAILFAST` + conferência do header | tudo como texto e linha inválida descartada sem erro |
+
+Modos (TBLPROPERTY `plhdwa.arquivo.limpeza_modo`, também pelo `converter_ddl_netezza.py --limpeza-modo`):
+
+| Modo | Como funciona | Quando usar |
+|---|---|---|
+| **`CLIENTE`** (padrão) | a abordagem do cliente: `tmp/` em **várias partes gravadas em paralelo**, lidas com `multiLine` em paralelo. Ajustes: header sai antes de gravar; registros com quebra de linha cortados na fronteira entre partes são achados numa passada em paralelo e gravados inteiros numa parte a mais | sempre |
+| `AUTO` | conta as linhas com aspa aberta: nenhuma → `PARALELA`; alguma → `CLIENTE` | alternativa |
+| `PARALELA` | `tmp/` em partes lidas sem `multiLine` | objeto que nunca tem registro em mais de uma linha |
+| `DIRETA` | regex e colunas na própria leitura (`from_csv`), sem `tmp` | alternativa sem gravar `tmp` |
+| `MULTILINHA` | `tmp/` em 1 arquivo (`coalesce(1)`) + `multiLine`, tarefa única | **não usar em arquivo grande**: no teste de 80 GB a ordem das linhas não se manteve |
+
+Comparativo (ponta a ponta pelo motor, landing no S3; detalhes na documentação técnica, seção 3b):
+
+| Arquivo | Sem limpeza | MULTILINHA | **CLIENTE** |
+|---|---|---|---|
+| 5 GB, 1 arquivo | 65 s | 259 s | **104 s** |
+| 8 × 1 GB em paralelo | 96 s | 130 s | **148 s** |
+| 3 GB, 50% dos registros em mais de uma linha | — | — | **164 s**, 24 partes, 8 registros da fronteira reunidos, 40.670.000/40.670.000 |
+| 80 GB com multilinha (5.633.850 registros em mais de uma linha) | — | falhou (ordem) | **338 s** (14,2 GB/min), 640 partes, 2 registros da fronteira reunidos, 1.126.770.000/1.126.770.000 |
+| 80 GB com + 80 GB sem, liberados juntos | — | — | **457 s** para os 160 GB (364 s e 354 s cada), tudo confere |
+
+Partes fixas (`limpeza_pedaco_mb`, padrão `0` = divisão do Spark) são opcionais: com 4 MB o 5 GB levou 198 s (cerca de
+2× mais lento). Com qualquer divisão, antes de gravar o motor confere se as linhas da fronteira e o número de partes são
+os esperados; se não, refaz (até 3 vezes) e, persistindo, para sem gravar.
+
+Outras propriedades: `plhdwa.arquivo.limpeza` (liga/desliga a limpeza só para a tabela) e `plhdwa.arquivo.limpeza_quote`
+(aspas dos textos; padrão `'`). Detalhes da leitura: fim de linha = LF (o CR escapado do Netezza, `\<CR>`, é dado
+e fica no valor; CR no fim da linha, de arquivo CRLF, sai) e a regex só roda nas linhas com barra invertida.
+
+Pontos do próprio código do cliente para confirmar (teste funcional, `implantacao/testes/limpeza/`):
+- `\"` (aspas duplas escapadas) fica gravado como `\"`: o escape do CSV só vale para a aspa simples.
+- Texto vazio entre aspas (`''`) vira NULL, igual a `\null`.
+- Modo `MULTILINHA`: tarefa única e sem garantia de ordem em arquivo grande; use `CLIENTE` (padrão).
+- Arquivo reenviado com o **mesmo nome** (mesma geração) não é recarregado: o motor faz a retomada (só a conclusão).
+
 ## 6. Controle no Db2
 
 - Driver: **`ibm_db`** (Python, oficial da IBM), instalado pelos notebooks. As threads do despachante

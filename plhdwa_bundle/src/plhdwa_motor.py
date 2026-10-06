@@ -3,8 +3,8 @@ PLHDWA · motor de carga Netezza -> Databricks (biblioteca única).
 
 Fluxo de um arquivo (processar_arquivo), igual no despachante (threads) e nos jobs independentes:
   CTL válido? -> DAT existe e não está vazio? -> tabela destino pela tag do código
-  -> [controle: EM_PROCESSAMENTO, só com db2_registrar_inicio = true] -> sequência -> pré-checagem
-  -> leitura + validação + carga atômica (1 commit)
+  -> [controle: EM_PROCESSAMENTO, só com db2_registrar_inicio = true] -> sequência
+  -> [limpeza do DAT em pasta_tmp, com limpeza_dat] -> pré-checagem -> leitura + validação + carga atômica (1 commit)
   -> controle: CONCLUIDO (síncrono) -> apaga CTL e DAT -> log CONCLUIDO
   Em erro: controle: ERRO (com a mensagem) + log ERRO_* + arquivos para a pasta de erro + objeto travado.
 
@@ -83,6 +83,11 @@ PARAMETROS = {
     "db2_registrar_inicio": ("false",          "true = grava EM_PROCESSAMENTO no Db2 antes da carga (e só carrega se o Db2 "
                                                "aceitar); false = o Db2 só recebe o fim: CONCLUIDO ou ERRO"),
     # --- leitura ---
+    "limpeza_pedaco_mb":  ("0",                "modo CLIENTE: tamanho (MB) dos pedaços do arquivo lidos por tarefa; 0 = padrão do "
+                                               "Spark. 4 deixa os pedaços iguais com qualquer nº de núcleos, mas medido ~2x mais lento"),
+    "limpeza_dat":        ("true",             "true = antes da carga, limpa o DAT com as regex do cliente e grava o arquivo "
+                                               "limpo em pasta_tmp (apagado no fim); false = lê o DAT direto. Cada tabela "
+                                               "pode sobrepor com a TBLPROPERTY plhdwa.arquivo.limpeza"),
     "precheck_linhas":    ("10000",            "linhas lidas na pré-checagem (header, tipos e detector de formato)"),
     "precheck_min_mb":    ("256",              "a partir deste tamanho, todo arquivo faz a pré-checagem completa"),
     # --- despachante ---
@@ -107,7 +112,7 @@ PARAMETROS = {
 
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
 COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
-          "pasta_tmp", "fuso_horario",
+          "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb",
           "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
@@ -429,22 +434,38 @@ def _p(meta, chave, padrao=""):
     return meta["props"].get(f"plhdwa.arquivo.{chave}", padrao)
 
 
-def ler_dat(arq, meta):
-    """CSV nativo, com as opções das TBLPROPERTIES e o schema da tabela. FAILFAST: linha inválida = erro."""
-    if _p(meta, "escape") and not _p(meta, "quote"):
-        return ler_dat_escape(arq, meta)
+def _leitura(arq, meta):
+    """(caminho, opções do leitor CSV) da carga: o DAT original ou, com a limpeza, o arquivo limpo em pasta_tmp.
+    Arquivo limpo (pedido do cliente): header na 1ª linha, delimitador da tabela, multiLine, aspas simples ('),
+    escape '\\' (padrão do Spark) e UTF-8 (o arquivo limpo é gravado em UTF-8). Sem multiLine, o header já saiu
+    na limpeza (as partes são lidas em paralelo e o header de cada parte não existe)."""
     tsf = _p(meta, "timestamp_format", "yyyy-MM-dd HH:mm[:ss]")
-    leitor = (CTX["spark"].read.format("csv").schema(meta["schema"])
-              .option("sep", _p(meta, "delimitador", "|"))
-              .option("header", _p(meta, "header", "true"))
-              .option("enforceSchema", "false")                 # confere o header com o schema
-              .option("encoding", _p(meta, "encoding", "ISO-8859-15"))
-              .option("quote", _p(meta, "quote"))                # vazio = sem aspas
-              .option("nullValue", _p(meta, "null_value"))
-              .option("timestampFormat", tsf).option("timestampNTZFormat", tsf)
-              .option("dateFormat", _p(meta, "date_format", "yyyy-MM-dd"))
-              .option("mode", "FAILFAST"))
-    return leitor.load(arq["dat"])
+    o = {"sep": _p(meta, "delimitador", "|"), "nullValue": _p(meta, "null_value"), "timestampFormat": tsf,
+         "timestampNTZFormat": tsf, "dateFormat": _p(meta, "date_format", "yyyy-MM-dd")}
+    if arq.get("dat_limpo"):
+        modo = arq.get("limpeza_modo")
+        multi = modo in ("MULTILINHA", "CLIENTE")       # CLIENTE: partes sem header, lidas com multiLine em paralelo
+        o.update(header=str(_p(meta, "header", "true") == "true" and modo == "MULTILINHA").lower(),
+                 multiLine=str(multi).lower(),
+                 quote=_p(meta, "limpeza_quote", "'"), escape="\\", encoding="UTF-8",
+                 lineSep="\n")                   # CR do dado (escapado no Netezza) não é fim de linha
+        return arq["dat_limpo"], o
+    o.update(header=_p(meta, "header", "true"), encoding=_p(meta, "encoding", "ISO-8859-15"), quote=_p(meta, "quote"))
+    return arq["dat"], o
+
+
+def ler_dat(arq, meta):
+    """CSV nativo, com as opções das TBLPROPERTIES e o schema da tabela. FAILFAST: linha inválida = erro.
+    Com a limpeza ativa, lê o arquivo limpo (pasta_tmp); sem ela, o DAT original (com ESCAPECHAR e sem aspas,
+    usa ler_dat_escape)."""
+    if arq.get("limpeza_modo") == "DIRETA":
+        return ler_limpo_direto(arq, meta)
+    if not arq.get("dat_limpo") and _p(meta, "escape") and not _p(meta, "quote"):
+        return ler_dat_escape(arq, meta)
+    caminho, o = _leitura(arq, meta)
+    return (CTX["spark"].read.format("csv").schema(meta["schema"]).options(**o)
+            .option("enforceSchema", "false")                 # confere o header com o schema
+            .option("mode", "FAILFAST").load(caminho))
 
 
 def ler_dat_escape(arq, meta):
@@ -477,6 +498,250 @@ def ler_dat_escape(arq, meta):
 
 def ler_header(arq):
     return CTX["dbutils"].fs.head(arq["dat"], 65536).split("\n", 1)[0].rstrip("\r")
+
+
+# =============================================================================
+# 5b. Limpeza do DAT (pedido do cliente): as 3 regex do cliente antes da carga. Modo por tabela
+#     (plhdwa.arquivo.limpeza_modo):
+#       CLIENTE (padrão) abordagem do cliente: tmp em partes paralelas + multiLine, sem header nas partes e com os
+#                     registros cortados na fronteira entre partes reunidos (preparar_cliente);
+#       AUTO          conta as linhas com aspa aberta: nenhuma -> PARALELA; alguma -> CLIENTE;
+#       DIRETA        regex + separação das colunas (from_csv) na mesma leitura: paralelo, sem arquivo temporário;
+#       PARALELA      arquivo limpo em pasta_tmp em várias partes (sem header), lido em paralelo;
+#       MULTILINHA    (não recomendado em arquivo grande) arquivo limpo em UM arquivo (coalesce(1)) lido com multiLine:
+#                     tarefa única, e no teste de 80 GB a ordem das linhas não se manteve.
+#     Em todos: leitura com o encoding da tabela (spark.read.text só lê UTF-8), schema da tabela e FAILFAST.
+# =============================================================================
+_RX_LIMPEZA = [(r'\\(?![\\\'"|nrt])', ''),   # barra que não escapa \ ' " | n r t: sai
+               (r'\\\|', '|'),                 # \| vira | (o texto vem entre aspas simples)
+               (r'\\null', '')]                # \null vira vazio (NULL)
+
+
+def limpeza_ativa(meta):
+    """TBLPROPERTY plhdwa.arquivo.limpeza da tabela; sem ela, o parâmetro limpeza_dat."""
+    v = meta["props"].get("plhdwa.arquivo.limpeza")
+    return str(v if v not in (None, "") else CTX["limpeza_dat"]).lower() == "true"
+
+
+MODOS_LIMPEZA = ("CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA")
+
+
+def modo_limpeza(meta):
+    """plhdwa.arquivo.limpeza_modo (CLIENTE padrão). Compatível com plhdwa.arquivo.limpeza_multilinha:
+    true = MULTILINHA, false = PARALELA."""
+    m = _p(meta, "limpeza_modo").upper()
+    if m in MODOS_LIMPEZA:
+        return m
+    antigo = _p(meta, "limpeza_multilinha").lower()
+    return {"true": "MULTILINHA", "false": "PARALELA"}.get(antigo, "CLIENTE")
+
+
+def caminho_tmp(arq):
+    return pasta(f"{CTX['pasta_tmp']}/{arq['base']}")
+
+
+def _aplicar_regex(linhas):
+    """As 3 regex do cliente, só nas linhas com barra invertida (nas outras não mudam nada e são a grande maioria;
+    medido em 5 GB: regex em toda linha 61 s · só nas linhas com barra 16 s, mesmo resultado)."""
+    limpo = F.col("value")
+    for rx, novo in _RX_LIMPEZA:
+        limpo = F.regexp_replace(limpo, rx, novo)
+    return linhas.withColumn("value", F.when(F.col("value").contains("\\"), limpo).otherwise(F.col("value")))
+
+
+def _linhas_limpas(arq, meta, tirar_header, regex=True, bloco=False):
+    """Linhas do DAT com o encoding da tabela e as 3 regex do cliente aplicadas (coluna value)."""
+    # Fim de linha = LF (lineSep): por padrão o Spark também quebra linha em CR solto, e o Netezza escapa CR do dado
+    # como "\\<CR>": sem isso, o registro seria cortado e o CR do dado viraria LF. CR no fim da linha (arquivo CRLF)
+    # e não escapado sai.
+    linhas = (CTX["spark"].read.format("csv").schema("value STRING").option("sep", "\u0001").option("quote", "")
+              .option("header", "false").option("lineSep", "\n").option("encoding", _p(meta, "encoding", "ISO-8859-15"))
+              .load(arq["dat"]))
+    if bloco:                                         # início do pedaço do arquivo que cada tarefa leu (ordem no arquivo)
+        linhas = linhas.select("value", F.col("_metadata.file_block_start").alias("_bloco"))
+    v = F.col("value")
+    linhas = linhas.withColumn("value", F.when(v.endswith("\r"), F.regexp_replace(v, r"(?<!\\)\r$", "")).otherwise(v))
+    if tirar_header and _p(meta, "header", "true") == "true":
+        linhas = linhas.filter(F.col("value") != F.lit(ler_header(arq)))
+    return _aplicar_regex(linhas) if regex else linhas
+
+
+def linhas_com_aspa_aberta(arq, meta):
+    """Detecção (modo AUTO): linhas com número ímpar de aspas não escapadas = um registro continua na linha de baixo.
+    Uma contagem em paralelo no arquivo inteiro. Se errar, erra para o lado seguro (vai para MULTILINHA)."""
+    q = re.escape(_p(meta, "limpeza_quote", "'"))
+    aspas = F.size(F.split(F.col("value"), f"(?<!\\\\){q}")) - 1
+    return (_linhas_limpas(arq, meta, tirar_header=False)
+            .filter(F.col("value").contains(_p(meta, "limpeza_quote", "'")) & (aspas % 2 == 1)).count())
+
+
+def _linhas_posicionadas(arq, meta):
+    """Linhas do DAT (sem header) com a posição: _bloco = início do pedaço do arquivo lido por cada tarefa (ordem
+    no arquivo) e _pos = ordem da linha DENTRO do pedaço; _impar = 1 se a linha tem número ímpar de aspas não
+    escapadas (abre ou fecha um registro que ocupa mais de uma linha). A regex do cliente vem DEPOIS da posição, para
+    um filtro por posição não precisar rodar a regex no arquivo inteiro.
+    _pos NÃO é o monotonically_increasing_id puro: ele embute o número da tarefa, e o Spark pode dar outro número
+    de tarefa ao mesmo pedaço em outra execução (visto no teste de 80 GB). Tirando a tarefa, sobra a ordem da linha
+    dentro da tarefa, que é estável (num arquivo só, cada tarefa lê um pedaço; conferido em preparar_cliente)."""
+    q = _p(meta, "limpeza_quote", "'")
+    linhas = (_linhas_limpas(arq, meta, tirar_header=True, regex=False, bloco=True)
+              .withColumn("_pos", F.monotonically_increasing_id()
+                          - F.spark_partition_id().cast("long") * F.lit(8589934592)))   # 2^33: sai a tarefa
+    linhas = _aplicar_regex(linhas)
+    aspas = F.size(F.split(F.col("value"), f"(?<!\\\\){re.escape(q)}")) - 1
+    return linhas.withColumn("_impar", (F.col("value").contains(q) & (aspas % 2 == 1)).cast("int"))
+
+
+class _LayoutMudou(Exception):
+    """Os pedaços do arquivo não saíram iguais entre as passadas (o motor refaz a limpeza)."""
+
+
+def preparar_cliente(arq, meta, destino, tentativas=3):
+    """Modo CLIENTE (padrão): a abordagem do cliente (arquivo limpo em pasta_tmp em VÁRIAS partes, gravadas em
+    paralelo, lidas com multiLine em paralelo), com os ajustes que evitam perder ou corromper registros:
+      - o header sai antes de gravar (o CSV com header=True descartaria a 1ª linha de cada parte);
+      - um registro em mais de uma linha que caiu na fronteira entre duas partes seria cortado ao meio. Uma
+        passada em paralelo resume cada pedaço (1ª e última linha com aspa aberta, quantidade); o driver encadeia
+        os pedaços na ordem do arquivo e acha esses registros (no máximo 1 por fronteira); eles saem das partes e
+        são gravados inteiros numa parte a mais. Nada é reordenado e nenhuma linha se perde.
+    As passadas são jobs Spark separados: os pedaços do arquivo precisam ser os mesmos em todas. O motor confere:
+    todas as linhas da fronteira achadas antes de gravar, e nº de partes gravadas = nº de pedaços (opcional:
+    limpeza_pedaco_mb fixa o tamanho do pedaço, ao custo de ~2x no tempo).
+    Se não conferir, apaga a tmp e refaz (até 'tentativas'); se ainda assim não conferir, para sem gravar nada."""
+    if int(CTX["limpeza_pedaco_mb"] or 0) > 0:      # opcional: a conferência abaixo já cobre pedaços que mudem
+        CTX["spark"].conf.set("spark.sql.files.maxPartitionBytes", f"{int(CTX['limpeza_pedaco_mb'])}m")
+    for t in range(tentativas):
+        try:
+            return _preparar_cliente(arq, meta, destino) + (f" (tentativa {t + 1})" if t else "")
+        except _LayoutMudou as e:
+            print(f"modo CLIENTE: {e}; refazendo a limpeza")
+            CTX["dbutils"].fs.rm(destino, True)
+    raise ErroCarga("ERRO_EXECUCAO", f"modo CLIENTE: os pedaços do arquivo mudaram entre as passadas em {tentativas} "
+                                     "tentativas", mover=False)
+
+
+def _preparar_cliente(arq, meta, destino):
+    df = _linhas_posicionadas(arq, meta)
+    resumo = sorted((df.groupBy("_bloco").agg(
+        F.min("_pos").alias("ini"), F.max("_pos").alias("fim"), F.sum("_impar").alias("impares"),
+        F.min(F.when(F.col("_impar") == 1, F.col("_pos"))).alias("pri_impar"),
+        F.max(F.when(F.col("_impar") == 1, F.col("_pos"))).alias("ult_impar")).collect()), key=lambda r: r["_bloco"])
+    if any(int(r["ini"]) != 0 for r in resumo):       # uma tarefa leu mais de um pedaço: a posição não é confiável
+        raise _LayoutMudou("uma tarefa leu mais de um pedaço do arquivo")
+    faixas, aberto, total_impares = [], False, 0
+    for i, r in enumerate(resumo):
+        total_impares += int(r["impares"] or 0)
+        if aberto:                                    # o pedaço começa no meio de um registro do pedaço anterior
+            if r["pri_impar"] is None:
+                raise ErroCarga("ERRO_DADOS", "registro com quebra de linha maior que um pedaço inteiro do arquivo")
+            faixas.append((resumo[i - 1]["_bloco"], resumo[i - 1]["ult_impar"], resumo[i - 1]["fim"]))   # início do registro
+            faixas.append((r["_bloco"], r["ini"], r["pri_impar"]))                                    # continuação
+        aberto = (int(aberto) + int(r["impares"] or 0)) % 2 == 1
+    fronteira = F.lit(False)
+    for b, a, z in faixas:                            # (pedaço, posição dentro do pedaço): estável entre execuções
+        fronteira = fronteira | ((F.col("_bloco") == F.lit(b)) & F.col("_pos").between(a, z))
+    registros = []
+    if faixas:                                        # poucos registros: montados inteiros no driver, ANTES de gravar
+        linhas_f = {(r["_bloco"], r["_pos"]): r["value"]
+                    for r in df.filter(fronteira).select("_bloco", "_pos", "value").collect()}
+        esperadas = {(b, p) for b, a, z in faixas for p in range(int(a), int(z) + 1)}
+        if set(linhas_f) != esperadas:
+            raise _LayoutMudou(f"linhas da fronteira: {len(set(linhas_f) & esperadas)} de {len(esperadas)} achadas")
+        for j in range(0, len(faixas), 2):            # cada par de faixas = 1 registro (início + continuação)
+            partes = [linhas_f[(b, p)] for b, a, z in faixas[j:j + 2] for p in range(int(a), int(z) + 1)]
+            registros.append(("\n".join(partes),))    # o registro inteiro num valor só: a ordem das linhas fica garantida
+    df.filter(~fronteira).select("value").write.mode("overwrite").text(destino)
+    gravadas = len([f for f in CTX["dbutils"].fs.ls(destino) if f.name.startswith("part-")])
+    if gravadas != len(resumo):
+        raise _LayoutMudou(f"{gravadas} parte(s) gravada(s) para {len(resumo)} pedaço(s) analisado(s)")
+    if registros:
+        CTX["spark"].createDataFrame(registros, "value STRING").write.mode("append").text(destino)
+    return (f"CLIENTE: {len(resumo)} parte(s) em paralelo, {total_impares} linha(s) com aspa aberta, "
+            f"{len(registros)} registro(s) na fronteira entre partes reunido(s)")
+
+
+def _schema_ddl(meta, extra=None):
+    campos = [f"`{f.name}` {f.dataType.simpleString()}" for f in meta["schema"].fields]
+    return ", ".join(campos + ([f"`{extra}` string"] if extra else []))
+
+
+def _opcoes_direta(meta):
+    tsf = _p(meta, "timestamp_format", "yyyy-MM-dd HH:mm[:ss]")
+    return {"sep": _p(meta, "delimitador", "|"), "quote": _p(meta, "limpeza_quote", "'"), "escape": "\\",
+            "nullValue": _p(meta, "null_value"), "timestampFormat": tsf, "timestampNTZFormat": tsf,
+            "dateFormat": _p(meta, "date_format", "yyyy-MM-dd")}
+
+
+def ler_limpo_direto(arq, meta):
+    """Modo DIRETA: as regex e a separação das colunas na MESMA leitura (from_csv com as opções do cliente), em
+    paralelo e sem arquivo temporário. Só para arquivos sem registro em mais de uma linha. FAILFAST: linha inválida
+    = erro (o motor mostra a 1ª linha inválida)."""
+    linhas = _linhas_limpas(arq, meta, tirar_header=True)
+    return (linhas.select(F.from_csv("value", _schema_ddl(meta), {**_opcoes_direta(meta), "mode": "FAILFAST"}).alias("r"))
+            .select(*[F.col(f"r.`{f.name}`").alias(f.name) for f in meta["schema"].fields]))
+
+
+def primeira_linha_invalida_direta(arq, meta):
+    """Diagnóstico do modo DIRETA: a 1ª linha que não vira registro válido (PERMISSIVE + coluna de corrompida)."""
+    linhas = _linhas_limpas(arq, meta, tirar_header=True)
+    r = (linhas.select("value", F.from_csv("value", _schema_ddl(meta, "_corrompida"),
+                                           {**_opcoes_direta(meta), "mode": "PERMISSIVE",
+                                            "columnNameOfCorruptRecord": "_corrompida"}).alias("r"))
+         .filter("r._corrompida IS NOT NULL").select("value").limit(1).collect())
+    return r[0]["value"] if r else None
+
+
+def preparar_dat(arq, meta):
+    """Limpeza do DAT antes da carga. Decide o modo e:
+       CLIENTE    (padrão) abordagem do cliente em partes paralelas + multiLine, com os ajustes (preparar_cliente);
+       AUTO       detecta se há registro em mais de uma linha: nenhum = PARALELA, algum = CLIENTE;
+       DIRETA     nada a gravar: a limpeza acontece na própria leitura da carga (ler_limpo_direto);
+       PARALELA   regex + arquivo limpo em pasta_tmp em várias partes (sem header), lido em paralelo;
+       MULTILINHA arquivo limpo em UM arquivo (coalesce(1)) + multiLine. NÃO recomendado em arquivo grande: uma
+                  tarefa só, e no teste de 80 GB o coalesce(1) não manteve a ordem das linhas (o header foi parar no
+                  meio do arquivo).
+    Devolve (modo efetivo, segundos, detalhe)."""
+    inicio = time.time()
+    modo, detalhe = modo_limpeza(meta), ""
+    if modo == "AUTO":
+        abertas = linhas_com_aspa_aberta(arq, meta)
+        modo = "CLIENTE" if abertas else "PARALELA"      # medido: PARALELA é a mais rápida sem multilinha
+        detalhe = f"AUTO: {abertas} linha(s) com aspa aberta"
+    arq["limpeza_modo"] = modo
+    if modo == "CLIENTE":
+        arq["dat_limpo"] = caminho_tmp(arq)
+        detalhe = preparar_cliente(arq, meta, arq["dat_limpo"]) + (f"; {detalhe}" if detalhe else "")
+    if modo in ("PARALELA", "MULTILINHA"):
+        destino = caminho_tmp(arq)
+        linhas = _linhas_limpas(arq, meta, tirar_header=(modo == "PARALELA"))
+        if modo == "MULTILINHA":
+            linhas = linhas.coalesce(1)               # 1 arquivo, na ordem original (repartition embaralharia)
+        linhas.write.mode("overwrite").text(destino)
+        arq["dat_limpo"] = destino
+    return modo, time.time() - inicio, detalhe
+
+
+def apagar_tmp(arq):
+    arq.pop("limpeza_modo", None)
+    caminho = arq.pop("dat_limpo", None)
+    if caminho:
+        try:
+            CTX["dbutils"].fs.rm(caminho, True)
+        except Exception as e:
+            print(f"não consegui apagar {caminho}: {e}")
+
+
+def limpar_tmp_orfaos():
+    """Pastas de limpeza que sobraram de uma execução que caiu. Só apaga pastas com o nome de um arquivo do motor
+    cujo CTL não está em andamento (outros arquivos do cliente em pasta_tmp não são tocados)."""
+    pastas = [f for f in _ls(pasta(CTX["pasta_tmp"])) if f.isDir() and ler_nome(f.name.rstrip("/") + ".CTL")]
+    if not pastas:
+        return
+    st = status_por_arquivo([f.name.rstrip("/") + ".CTL" for f in pastas])
+    for f in pastas:
+        if st.get(f.name.rstrip("/") + ".CTL") not in ("ROTEADO", "INICIADO", "CARREGADO"):
+            CTX["dbutils"].fs.rm(f.path, True)
+            print(f"pasta de limpeza órfã removida: {f.path}")
 
 
 # =============================================================================
@@ -591,20 +856,26 @@ def explicar_erro(e, arq, meta):
     """Como classificar(), mas quando o Spark só diz "erro ao ler o arquivo" (FAILED_READ_FILE), relê o arquivo
     em modo tolerante e mostra a 1ª linha inválida e o motivo. Custo extra só quando já houve erro."""
     tipo, msg = classificar(e)
-    if tipo != "ERRO_DADOS" or "FAILED_READ_FILE" not in msg or (_p(meta, "escape") and not _p(meta, "quote")):
+    if tipo == "ERRO_DADOS" and arq.get("limpeza_modo") == "DIRETA" and "ERRO_DADOS:" not in msg:
+        try:
+            ruim = primeira_linha_invalida_direta(arq, meta)
+            if ruim is not None:
+                return tipo, ("ERRO_DADOS: linha inválida depois da limpeza (campos a mais/menos, tipo incompatível ou "
+                              f"registro em mais de uma linha: use limpeza_modo AUTO ou MULTILINHA). Linha: {ruim[:400]}")
+        except Exception as diag:
+            print(f"diagnóstico do erro não foi possível: {diag}")
+        return tipo, msg
+    sem_diagnostico = not arq.get("dat_limpo") and _p(meta, "escape") and not _p(meta, "quote")
+    if tipo != "ERRO_DADOS" or "FAILED_READ_FILE" not in msg or sem_diagnostico:
         return tipo, msg
     try:
         sep = _p(meta, "delimitador", "|")
         n = len(meta["schema"].fields)
         esquema = T.StructType(meta["schema"].fields + [T.StructField("_corrompida", T.StringType())])
-        tsf = _p(meta, "timestamp_format", "yyyy-MM-dd HH:mm[:ss]")
-        ruim = (CTX["spark"].read.format("csv").schema(esquema).option("sep", sep)
-                .option("header", _p(meta, "header", "true")).option("encoding", _p(meta, "encoding", "ISO-8859-15"))
-                .option("quote", _p(meta, "quote")).option("nullValue", _p(meta, "null_value"))
-                .option("timestampFormat", tsf).option("timestampNTZFormat", tsf)
-                .option("dateFormat", _p(meta, "date_format", "yyyy-MM-dd"))
+        caminho, o = _leitura(arq, meta)                     # mesmas opções da carga (DAT ou arquivo limpo)
+        ruim = (CTX["spark"].read.format("csv").schema(esquema).options(**o)
                 .option("mode", "PERMISSIVE").option("columnNameOfCorruptRecord", "_corrompida")
-                .load(arq["dat"]).filter("_corrompida IS NOT NULL")
+                .load(caminho).filter("_corrompida IS NOT NULL")
                 .select("*").limit(1).collect())   # todas as colunas: com poda, o Spark não analisa a coluna ruim
         if not ruim:
             print("diagnóstico: nenhuma linha inválida encontrada no modo tolerante")
@@ -948,12 +1219,17 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
                 raise ErroCarga("ERRO_CTL", f"DIM não aceita lista de instituições (CTL veio com {insts})")
             if ultima and arq["dt_ger"] <= ultima:
                 raise ErroCarga("ERRO_SEQUENCIA", f"geração {arq['dt_ger']} não é posterior à última carregada {ultima}")
+            limpeza = None
+            if limpeza_ativa(meta):                     # pedido do cliente: limpa o DAT antes da carga
+                modo_l, t_limpeza, detalhe = preparar_dat(arq, meta)
+                limpeza = (f"limpeza do DAT em {t_limpeza:.1f} s (modo {modo_l}"
+                           + (f"; {detalhe}" if detalhe else "") + ")")
             precheck(arq, meta, insts, tamanho)
             versao, inseridas, removidas = carregar(arq, meta, insts)
             carregou = True
             pend.append((arq, "CARREGADO", {**comum(), "instituicoes": insts, "inicio": inicio, "fim": time.time(),
                                             "ts": time.time(), "qtd_inserida": inseridas, "qtd_removida": removidas,
-                                            "versao": versao}))
+                                            "versao": versao, "mensagem": limpeza}))
 
         # 2) controle: este arquivo terminou (com a quantidade). Se a controle falhar: ERRO_DB2 e trava.
         fim = time.time()
@@ -987,6 +1263,8 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
         if mover:
             mover_para_erro(arq)
         raise ErroCarga(tipo, msg, mover=False)
+    finally:
+        apagar_tmp(arq)                                 # o arquivo limpo é apagado sempre (sucesso ou erro)
 
 
 # =============================================================================

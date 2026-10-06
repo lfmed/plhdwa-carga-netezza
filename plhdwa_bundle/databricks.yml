@@ -160,6 +160,20 @@ variables:
   job_max_minutos:
     description: ... ou até M minutos
     default: "60"
+  limpeza_dat:
+    description: >-
+      "true" (padrão) = antes da carga, cada DAT passa pela limpeza do cliente (regex de escape e \null), é gravado
+      limpo em pasta_tmp/<arquivo>/ e lido com header, delimitador, multiLine e aspas simples; o arquivo limpo é
+      apagado no fim. "false" = lê o DAT direto. Cada tabela pode sobrepor com a TBLPROPERTY plhdwa.arquivo.limpeza.
+      O modo vem de plhdwa.arquivo.limpeza_modo: AUTO (padrão; detecta por arquivo se há registro em mais de uma
+      linha: se não há, limpa e lê em partes paralelas; se há, usa o código do cliente), PARALELA, DIRETA ou MULTILINHA.
+    default: "true"
+  limpeza_pedaco_mb:
+    description: >-
+      Modo CLIENTE da limpeza: tamanho (MB) dos pedaços do arquivo lidos por tarefa. "0" (padrão) = o do Spark; o motor
+      confere que os pedaços não mudaram entre as passadas e refaz se mudaram. "4" fixa os pedaços com qualquer número
+      de núcleos, mas foi medido cerca de 2x mais lento.
+    default: "0"
   precheck_linhas:
     description: Linhas lidas na pré-checagem (header, tipos, detector de formato)
     default: "10000"
