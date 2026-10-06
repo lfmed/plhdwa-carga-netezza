@@ -74,11 +74,22 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
    # o usuário/SP que roda os jobs precisa de READ no scope
    databricks secrets put-acl plhdwa <usuario_ou_grupo_dos_jobs> READ
    ```
-7. **Pacotes Python**: os notebooks instalam `databricks-sdk`, `pg8000` e `ibm_db` do PyPI. Se o serverless
+7. **Pacotes Python**: o environment dos jobs instala `databricks-sdk`, `pg8000` e `ibm-db` do PyPI. Se o serverless
    do cliente não tiver saída para a internet, configure um repositório PyPI interno (mirror) para o workspace.
 8. **Tabela da controle no Db2**: o DBA cria com `sql/02_db2_controle_ddl.sql` (trocando `{tabela}`), ou o
    job de teste cria com `criar_tabela = true`. Se a controle já existe com outro layout, ajuste o comando
    (seção 6).
+9. **Service principal da área** (variável `svc_hash` = *application ID* do SP): o bundle fica em
+   `/Workspace/Users/<svc_hash>/.bundle/plhdwa/<target>` e todos os jobs rodam como ele (`run_as` nos targets
+   dev, hml e prd). Sem padrão: se o CI/CD não preencher (`--var svc_hash=<application id>` ou a variável de
+   ambiente `BUNDLE_VAR_svc_hash`), o deploy para com "no value assigned to required variable svc_hash".
+   - Quem faz o deploy: o próprio SP (recomendado no CI/CD) ou um usuário com o papel **Service Principal: User**
+     nesse SP.
+   - O SP precisa de: `USE CATALOG`/`USE SCHEMA`/`CREATE TABLE` no catálogo das tabelas operacionais, `MODIFY` e
+     `SELECT` nas tabelas destino, `READ FILES` e `WRITE FILES` na external location da landing (ou `READ VOLUME`
+     e `WRITE VOLUME`), `READ` no secret scope do Db2 e `CAN_USE` no SQL warehouse.
+   - Os dashboards não usam o `run_as`: as consultas rodam com a credencial de quem publica (ou de quem vê,
+     conforme a publicação).
 
 ## 3. Instalar
 
@@ -102,6 +113,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 | Onde ficam as coisas | `catalogo`, `schema`, `catalogos_objetos` (catálogos das tabelas destino), `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
 | Controle (Db2) | `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
 | Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min` |
+| Identidade | `svc_hash` (application ID do service principal: pasta do bundle e `run_as` dos jobs) |
 | Governança | `owner_tag`, `grupo_owner`, `email_alertas` |
 | Só no modo SIMULADO | `lakebase_instance`, `lakebase_database`, `lakebase_tabela` |
 

@@ -14,7 +14,19 @@ include:
   - resources/*.yml
   - targets/*.yml            # targets extras (opcional): um arquivo por ambiente, se preferir separar
 
+workspace:
+  # Pasta do bundle no workspace, na área do service principal que executa os jobs (run_as dos targets)
+  root_path: /Workspace/Users/${var.svc_hash}/.bundle/${bundle.name}/${bundle.target}
+  artifact_path: /Workspace/Users/${var.svc_hash}/.bundle/${bundle.name}/${bundle.target}/artifacts
+  file_path: /Workspace/Users/${var.svc_hash}/.bundle/${bundle.name}/${bundle.target}/files
+
 variables:
+  # ------------------------------------------------------------------ identidade
+  svc_hash:
+    description: >-
+      Hash (application ID) do service principal da área, que executa os jobs (run_as) e cria os recursos. Sem
+      padrão: o deploy para se não for preenchido (no target ou no CI/CD com --var svc_hash=... ou BUNDLE_VAR_svc_hash).
+
   # ------------------------------------------------------------------ onde ficam as coisas
   catalogo:
     description: Catálogo das tabelas operacionais do PLHDWA (log, lotes, controle). Precisa existir.
@@ -202,11 +214,15 @@ variables:
 
 targets:
   # Modelos: troque o host e os valores <...>. Rode sempre com -t <target>.
+  # svc_hash pode vir do CI/CD (--var svc_hash=<application id> ou BUNDLE_VAR_svc_hash) em vez de ficar aqui.
   # Antes do 1º deploy, crie o secret scope com o usuário/senha do Db2 (ver README, passo 2).
   dev:
     workspace:
       host: https://<workspace-dev>.cloud.databricks.com
+    run_as:
+      service_principal_name: ${var.svc_hash}
     variables:
+      svc_hash: <application_id_sp_dev>
       catalogo: <catalogo_dev>
       landing: s3://<bucket_dev>/<prefixo>
       warehouse_id: <warehouse_id_dev>
@@ -220,7 +236,10 @@ targets:
   hml:
     workspace:
       host: https://<workspace-hml>.cloud.databricks.com
+    run_as:
+      service_principal_name: ${var.svc_hash}
     variables:
+      svc_hash: <application_id_sp_hml>
       catalogo: <catalogo_hml>
       landing: s3://<bucket_hml>/<prefixo>
       warehouse_id: <warehouse_id_hml>
@@ -234,8 +253,10 @@ targets:
     mode: production
     workspace:
       host: https://<workspace-prd>.cloud.databricks.com
-      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.svc_hash}
     variables:
+      svc_hash: <application_id_sp_prd>
       catalogo: <catalogo_prd>
       landing: s3://<bucket_prd>/<prefixo>
       warehouse_id: <warehouse_id_prd>
