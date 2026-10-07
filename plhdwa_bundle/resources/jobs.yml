@@ -183,6 +183,7 @@ resources:
         - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
         - {name: vigia_parado_min, default: "${var.vigia_parado_min}"}
+        - {name: listagem_espera_s, default: "${var.vigia_retry_espera_s}"}
         - {name: mover_invalido_min, default: "${var.mover_invalido_min}"}
         - {name: despachante_job_id, default: "${resources.jobs.plhdwa_despachante.id}"}
       # Ambiente leve: o vigia só lista a pasta de CTL e consulta/dispara o despachante (databricks-sdk já vem no

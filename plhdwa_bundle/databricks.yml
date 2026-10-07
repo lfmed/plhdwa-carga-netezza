@@ -205,6 +205,10 @@ variables:
       mais de N minutos vai para pasta_erro (com o .dat de mesmo nome) e gera o evento NOME_INVALIDO. A espera
       evita mexer num arquivo que ainda está sendo gravado.
     default: "5"
+  vigia_retry_espera_s:
+    description: >-
+      Vigia: espera (s) entre as tentativas de listar a pasta de CTL (3 tentativas) antes de terminar com erro.
+    default: "30"
   vigia_parado_min:
     description: O vigia dispara o despachante se houver CTL parado há mais de N minutos
     default: "5"

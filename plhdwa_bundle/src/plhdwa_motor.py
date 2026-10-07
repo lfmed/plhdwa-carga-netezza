@@ -109,6 +109,8 @@ PARAMETROS = {
     "despachante_job_id": ("0",              "job do despachante (o vigia dispara se houver CTL parado)"),
     "mover_invalido_min": ("5",                "arquivo da pasta de CTL com nome fora do padrão há mais de N minutos vai para "
                                                "pasta_erro (com o .dat de mesmo nome); a espera evita mexer em arquivo sendo gravado"),
+    "listagem_espera_s":  ("5",                "espera (s) entre as tentativas de listar a pasta de CTL antes de falhar "
+                                               "(vigia: variável vigia_retry_espera_s, padrão 30)"),
     "vigia_parado_min":   ("5",                "CTL pendente há mais de N minutos sem despachante rodando = disparar"),
     # --- referências dinâmicas do Jobs ---
     "job_id":             ("0",                "{{job.id}}"),
@@ -119,7 +121,7 @@ PARAMETROS = {
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
 COMUNS = ["catalogo", "schema", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
           "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb",
-          "mover_invalido_min", "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
+          "mover_invalido_min", "listagem_espera_s", "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
           "db2_espera_base_s", "db2_registrar_inicio",
@@ -345,7 +347,7 @@ def _ls(caminho, obrigatoria=False, tentativas=3, info=None):
                 return []
             if t == tentativas - 1:
                 raise FalhaLanding(f"não consegui listar {caminho} ({tentativas} tentativas): {msg[:1500]}")
-            time.sleep(5 * (t + 1))
+            time.sleep(float(CTX.get("listagem_espera_s") or 5))
 
 
 def tamanhos_dat():
