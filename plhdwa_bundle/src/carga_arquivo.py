@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # PLHDWA · Job independente (objetos com plhdwa_execucao = JOB)
+# MAGIC # PLHDWA · Job independente (objetos com execucao = JOB na ctl_parametros)
 # MAGIC Disparado pelo despachante com os parâmetros `ctl` (caminho do CTL), `modo` e `lote_id`.
 # MAGIC Depois do arquivo recebido, **segue com os próximos arquivos do mesmo objeto** (em ordem de geração),
 # MAGIC até `max_arquivos` ou `max_minutos`: o arranque do job (~2 min) é pago uma vez por objeto, e não por arquivo.

@@ -1,22 +1,20 @@
 """
-Converte a DDL de uma EXTERNAL TABLE do Netezza em DDL de tabela Delta para o PLHDWA.
-
-Por que existe: os metadados de carga NÃO ficam numa tabela de cadastro. Eles ficam na própria
-tabela Delta de destino:
-  - layout (colunas, ordem e tipos)  -> o schema da tabela
-  - código do objeto                 -> tag UC  plhdwa_cod_objeto (consultável no information_schema)
-  - regras de carga e de formato     -> TBLPROPERTIES  plhdwa.*
+Converte a DDL de uma EXTERNAL TABLE do Netezza em:
+  1) CREATE TABLE da tabela Delta de destino (layout: colunas, ordem e tipos; CLUSTER BY; tag OWNER);
+  2) MERGE da linha do objeto na ctl_parametros (tabelas operacionais do PLHDWA): destino, tipo de carga, colunas
+     do REPLACE WHERE, modo de execução, formato do arquivo e limpeza.
+O motor não usa tags nem TBLPROPERTIES plhdwa.* (07/10/2026): tudo o que é parâmetro fica na ctl_parametros.
 O formato do arquivo (delimitador, header, encoding, escape...) é lido do bloco USING da DDL
 do Netezza, que é quem gera o .dat. Assim, os dois lados nunca ficam diferentes.
 
 Uso (local, só Python 3, sem dependências):
   python3 converter_ddl_netezza.py exemplos/ddl_external_dwa_ccr_fatparcela.sql \
       --catalogo <catalogo_destino> --schema <schema_destino> --tabela fat_parcela \
+      --catalogo-controle <catalogo_plhdwa> --schema-controle <schema_plhdwa> \
       --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
       [--execucao DESPACHANTE|JOB] [--tipo-job PERFORMANCE_OPTIMIZED|STANDARD] [--owner-tag PLHDWA] \
       > 1230_fat_parcela.sql
-O catálogo destino precisa estar na variável catalogos_objetos do bundle (ou ser o mesmo das tabelas
-operacionais), porque é lá que o motor procura a tag plhdwa_cod_objeto.
+--catalogo-controle/--schema-controle = variáveis catalogo e schema do bundle (onde está a ctl_parametros).
 """
 import argparse
 import re
@@ -74,11 +72,12 @@ def main():
     p.add_argument("--catalogo", required=True)
     p.add_argument("--schema", required=True)
     p.add_argument("--tabela", required=True)
+    p.add_argument("--catalogo-controle", required=True, help="catálogo das tabelas operacionais (variável catalogo)")
+    p.add_argument("--schema-controle", required=True, help="schema das tabelas operacionais (variável schema)")
     p.add_argument("--cod-objeto", required=True)
     p.add_argument("--tipo-carga", choices=["FATO", "DIM"], required=True)
     p.add_argument("--col-data-mov", default="")
     p.add_argument("--col-instituicao", default="")
-    p.add_argument("--formato-data-mov", default="yyyyMMdd", help="formato da coluna de data de movimento")
     p.add_argument("--timestamp-format", default="yyyy-MM-dd HH:mm[:ss]")
     p.add_argument("--date-format", default="yyyy-MM-dd")
     p.add_argument("--owner-tag", default="PLHDWA")
@@ -87,12 +86,11 @@ def main():
     p.add_argument("--tipo-job", choices=["PERFORMANCE_OPTIMIZED", "STANDARD"], default="PERFORMANCE_OPTIMIZED",
                    help="tipo do job independente (só vale com --execucao JOB)")
     p.add_argument("--limpeza", choices=["true", "false"],
-                   help="sobrepõe a variável limpeza_dat só para esta tabela (plhdwa.arquivo.limpeza)")
-    p.add_argument("--limpeza-modo", choices=["AUTO", "DIRETA", "PARALELA", "MULTILINHA"],
-                   help="AUTO (padrão do motor) detecta por arquivo (sem multilinha = PARALELA); DIRETA = regex na própria leitura, sem tmp; "
-                        "PARALELA = tmp em partes; MULTILINHA = código do cliente (1 arquivo + multiLine)")
-    p.add_argument("--limpeza-multilinha", choices=["true", "false"],
-                   help="(antigo) true = MULTILINHA, false = PARALELA; prefira --limpeza-modo")
+                   help="sobrepõe a variável limpeza_dat só para este objeto (coluna limpeza)")
+    p.add_argument("--limpeza-modo", choices=["CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA"],
+                   help="CLIENTE (padrão do motor) = tmp em partes paralelas + multiLine; AUTO detecta por arquivo; "
+                        "DIRETA = regex na própria leitura, sem tmp; PARALELA = tmp em partes sem multiLine; "
+                        "MULTILINHA = 1 arquivo + multiLine (não usar em arquivo grande)")
     p.add_argument("--limpeza-quote", help="aspas dos textos no arquivo limpo (padrão do motor: aspas simples)")
     a = p.parse_args()
 
@@ -111,31 +109,28 @@ def main():
     defs = ",\n".join(f"  {n.ljust(largura)}  {tipo_delta(t, x)}" for n, t, x in colunas)
     cluster = f"CLUSTER BY ({a.col_data_mov}, {a.col_instituicao})" if a.tipo_carga == "FATO" else "CLUSTER BY AUTO"
 
-    props = {
-        "plhdwa.cod_objeto": a.cod_objeto,
-        "plhdwa.tabela_origem": nome_origem,
-        "plhdwa.tipo_carga": a.tipo_carga,
-        "plhdwa.col_data_mov": a.col_data_mov,
-        "plhdwa.formato_data_mov": a.formato_data_mov,
-        "plhdwa.col_instituicao": a.col_instituicao,
-        "plhdwa.arquivo.delimitador": opcoes["delim"],
-        "plhdwa.arquivo.header": opcoes["includeheader"].lower(),
-        "plhdwa.arquivo.encoding": opcoes["encoding"],
-        "plhdwa.arquivo.escape": opcoes["escapechar"],
-        "plhdwa.arquivo.quote": '"' if opcoes["quotedvalue"].upper() == "DOUBLE" else "",
+    parametros = {   # colunas da ctl_parametros (None = NULL = padrão do motor)
+        "cod_objeto": int(a.cod_objeto),
+        "catalogo_destino": a.catalogo, "schema_destino": a.schema, "tabela_destino": a.tabela,
+        "tipo_carga": a.tipo_carga,
+        "col_data_mov": a.col_data_mov or None, "col_instituicao": a.col_instituicao or None,
+        "execucao": a.execucao, "tipo_job": a.tipo_job, "ativo": True,
+        "delimitador": opcoes["delim"],
+        "encoding": opcoes["encoding"],
+        "header": opcoes["includeheader"].lower() == "true",
+        "escape": opcoes["escapechar"] or None,
+        "quote": '"' if opcoes["quotedvalue"].upper() == "DOUBLE" else None,
         # NULLVALUE só entra se estiver na DDL; senão o motor usa vazio = NULL (pendência S1).
-        "plhdwa.arquivo.null_value": opcoes.get("nullvalue", ""),
-        "plhdwa.arquivo.timestamp_format": a.timestamp_format,
-        "plhdwa.arquivo.date_format": a.date_format,
+        "null_value": opcoes.get("nullvalue") or None,
+        "date_format": a.date_format,
+        "timestamp_format": a.timestamp_format,
+        # limpeza do DAT (sem estas, vale a variável limpeza_dat e os padrões do motor)
+        "limpeza": None if a.limpeza is None else a.limpeza == "true",
+        "limpeza_modo": a.limpeza_modo,
+        "limpeza_quote": a.limpeza_quote,
+        "tabela_origem": nome_origem,
     }
-    # limpeza do DAT (opcional por tabela; sem estas, vale a variável limpeza_dat e os padrões do motor)
-    for chave, valor in (("limpeza", a.limpeza), ("limpeza_modo", a.limpeza_modo),
-                         ("limpeza_multilinha", a.limpeza_multilinha), ("limpeza_quote", a.limpeza_quote)):
-        if valor is not None:
-            props[f"plhdwa.arquivo.{chave}"] = valor
-    sql_str = lambda v: str(v).replace("\\", "\\\\").replace("'", "\\'")   # escapa \ e ' no literal SQL
-    props_sql = ",\n".join(f"  '{k}' = '{sql_str(v)}'" for k, v in props.items())
-
+    controle = f"{a.catalogo_controle}.{a.schema_controle}.ctl_parametros"
     print(f"""-- Gerado por converter_ddl_netezza.py a partir de {a.ddl}
 -- Origem Netezza: {nome_origem} · {len(colunas)} colunas
 CREATE SCHEMA IF NOT EXISTS {a.catalogo}.{a.schema};
@@ -145,16 +140,39 @@ CREATE TABLE IF NOT EXISTS {alvo} (
 {defs}
 )
 {cluster}
-COMMENT 'PLHDWA · carga Netezza {nome_origem} · objeto {a.cod_objeto} · {a.tipo_carga}'
-TBLPROPERTIES (
-{props_sql}
-);
+COMMENT 'PLHDWA · carga Netezza {nome_origem} · objeto {a.cod_objeto} · {a.tipo_carga}';
 
--- Tags: OWNER (custo/governança) · plhdwa_cod_objeto (o motor acha a tabela pelo código do CTL)
---       plhdwa_execucao / plhdwa_tipo_job (onde o objeto roda: despachante ou job independente)
-ALTER TABLE {alvo} SET TAGS ('OWNER' = '{a.owner_tag}', 'plhdwa_cod_objeto' = '{a.cod_objeto}',
-                             'plhdwa_execucao' = '{a.execucao}', 'plhdwa_tipo_job' = '{a.tipo_job}');
-ALTER SCHEMA {a.catalogo}.{a.schema} SET TAGS ('OWNER' = '{a.owner_tag}');""")
+-- Tag OWNER (custo/governança). Os parâmetros do objeto ficam na ctl_parametros, abaixo.
+ALTER TABLE {alvo} SET TAGS ('OWNER' = '{a.owner_tag}');
+ALTER SCHEMA {a.catalogo}.{a.schema} SET TAGS ('OWNER' = '{a.owner_tag}');
+
+{merge_parametros(controle, parametros)}""")
+
+
+def literal_sql(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    return "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"   # escapa \ e ' no literal SQL
+
+
+def merge_parametros(controle, parametros):
+    """MERGE da linha do objeto na ctl_parametros: cria ou atualiza (a coluna observacao não é tocada)."""
+    origem = ",\n         ".join(f"{literal_sql(v)} AS {k}" for k, v in parametros.items())
+    cols = list(parametros) + ["alterado_por", "alterado_em"]
+    atualiza = ",\n  ".join(f"{k} = s.{k}" for k in cols if k != "cod_objeto")
+    return f"""-- Parâmetros do objeto (cria ou atualiza a linha; observacao é preservada)
+MERGE INTO {controle} t
+USING (SELECT {origem},
+         current_user() AS alterado_por, current_timestamp() AS alterado_em) s
+ON t.cod_objeto = s.cod_objeto
+WHEN MATCHED THEN UPDATE SET
+  {atualiza}
+WHEN NOT MATCHED THEN INSERT ({", ".join(cols)})
+  VALUES ({", ".join("s." + k for k in cols)});"""
 
 
 if __name__ == "__main__":

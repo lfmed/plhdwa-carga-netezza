@@ -2,18 +2,19 @@
 PLHDWA · motor de carga Netezza -> Databricks (biblioteca única).
 
 Fluxo de um arquivo (processar_arquivo), igual no despachante (threads) e nos jobs independentes:
-  CTL válido? -> DAT existe e não está vazio? -> tabela destino pela tag do código
+  CTL válido? -> DAT existe e não está vazio? -> parâmetros do código na ctl_parametros (destino, carga, formato)
   -> [controle: EM_PROCESSAMENTO, só com db2_registrar_inicio = true] -> sequência
   -> [limpeza do DAT em pasta_tmp, com limpeza_dat] -> pré-checagem -> leitura + validação + carga atômica (1 commit)
   -> controle: CONCLUIDO (síncrono) -> apaga CTL e DAT -> log CONCLUIDO
   Em erro: controle: ERRO (com a mensagem) + log ERRO_* + arquivos para a pasta de erro + objeto travado.
 
 Modelo v2 (01/10/2026):
-  - sem filas por tamanho: cada objeto diz onde roda, por tag na tabela destino
-      plhdwa_execucao = DESPACHANTE (padrão) | JOB      plhdwa_tipo_job = PERFORMANCE_OPTIMIZED | STANDARD
+  - sem filas por tamanho: cada objeto diz onde roda, na ctl_parametros
+      execucao = DESPACHANTE (padrão) | JOB      tipo_job = PERFORMANCE_OPTIMIZED | STANDARD
   - ctl_execucao guarda só os limites de simultâneos de cada modo
   - cada execução do despachante é um LOTE (lote_id); cada arquivo sensibiliza a controle sozinho
-  - metadados do objeto ficam na própria tabela destino (tags + TBLPROPERTIES plhdwa.*)
+  - parâmetros de cada objeto ficam na ctl_parametros (07/10/2026: sem tags nem TBLPROPERTIES); da tabela
+    destino só vem o layout (colunas e tipos)
   - todo evento vai para log_carga_evento (só INSERT: vários workers ao mesmo tempo sem conflito)
 """
 import re
@@ -50,8 +51,6 @@ PARAMETROS = {
     # --- onde ficam as coisas ---
     "catalogo":           ("",                 "catálogo das tabelas operacionais do PLHDWA (log, lotes, controle)"),
     "schema":             ("",                 "schema das tabelas operacionais"),
-    "catalogos_objetos":  ("",                 "catálogos onde procurar as tabelas destino (pela tag plhdwa_cod_objeto), "
-                                               "separados por vírgula; vazio = o mesmo de 'catalogo'"),
     "landing":            ("",                 "prefixo da landing (s3://... ou /Volumes/...); as pastas abaixo ficam dentro dele"),
     "pasta_dat":          ("dados",            "pasta dos arquivos .dat, dentro de landing"),
     "pasta_ctl":          ("ctl",              "pasta dos arquivos .CTL, dentro de landing (o gatilho do despachante olha esta)"),
@@ -87,7 +86,7 @@ PARAMETROS = {
                                                "Spark. 4 deixa os pedaços iguais com qualquer nº de núcleos, mas medido ~2x mais lento"),
     "limpeza_dat":        ("true",             "true = antes da carga, limpa o DAT com as regex do cliente e grava o arquivo "
                                                "limpo em pasta_tmp (apagado no fim); false = lê o DAT direto. Cada tabela "
-                                               "pode sobrepor com a TBLPROPERTY plhdwa.arquivo.limpeza"),
+                                               "pode sobrepor com a coluna limpeza da ctl_parametros"),
     "precheck_linhas":    ("10000",            "linhas lidas na pré-checagem (header, tipos e detector de formato)"),
     "precheck_min_mb":    ("256",              "a partir deste tamanho, todo arquivo faz a pré-checagem completa"),
     # --- despachante ---
@@ -111,7 +110,7 @@ PARAMETROS = {
 
 
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
-COMUNS = ["catalogo", "schema", "catalogos_objetos", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
+COMUNS = ["catalogo", "schema", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
           "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb",
           "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
@@ -140,9 +139,8 @@ def iniciar(spark, dbutils, params):
     CTX["lote_id"] = int(params.get("lote_id") or CTX["job_run_id"] or 0)
     # Datas de geração vêm em horário de Brasília: a sessão inteira trabalha nesse fuso.
     spark.conf.set("spark.sql.session.timeZone", CTX["fuso_horario"])
-    CTX["catalogos_objetos"] = [c.strip() for c in (CTX["catalogos_objetos"] or CTX["catalogo"]).split(",") if c.strip()]
     validar_landing()
-    for c in CTX["catalogos_objetos"] + [CTX["lakebase_tabela"], CTX["db2_tabela"] or "x"]:
+    for c in [CTX["catalogo"], CTX["schema"], CTX["lakebase_tabela"], CTX["db2_tabela"] or "x"]:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", c):   # vão em SQL montado por texto: só nomes simples
             raise ValueError(f"nome inválido em parâmetro: {c!r}")
 
@@ -324,11 +322,11 @@ def objetos_travados():
 
 
 def pendentes(cod=None):
-    """CTLs da pasta de CTL ainda não concluídos, de objetos não travados, agrupados por objeto e em ordem de geração.
+    """CTLs da pasta de CTL ainda não concluídos, de objetos não travados nem inativos, agrupados por objeto e em ordem de geração.
     cod: só os desse objeto (usado pelo job independente para seguir com o próximo arquivo do mesmo objeto)."""
     arqs = [a for a in (ler_nome(f.name) for f in _ls(pasta(CTX["pasta_ctl"]))) if a and (cod is None or a["cod"] == cod)]
     st = status_por_arquivo([a["nome_ctl"] for a in arqs])
-    travados = objetos_travados()
+    parados = objetos_travados() | objetos_inativos()
     grupos = {}
     for a in arqs:
         if st.get(a["nome_ctl"]) == "CONCLUIDO":
@@ -337,7 +335,7 @@ def pendentes(cod=None):
             except Exception:
                 pass
             continue
-        if a["cod"] in travados:
+        if a["cod"] in parados:             # travado (erro) ou inativo na ctl_parametros
             continue
         grupos.setdefault(a["cod"], []).append(a)
     return {cod: sorted(v, key=lambda a: a["dt_ger"]) for cod, v in grupos.items()}
@@ -362,68 +360,89 @@ def mover_para_erro(arq):
 
 
 # =============================================================================
-# 4. Metadados (vêm da tabela destino; não existe tabela de cadastro)
+# 4. Parâmetros dos objetos (tabela ctl_parametros: uma linha por código de objeto)
 # =============================================================================
+# O motor não usa tags nem TBLPROPERTIES: destino, tipo de carga, colunas do REPLACE WHERE, modo de execução,
+# formato do arquivo e limpeza vêm da ctl_parametros. Da tabela destino só vem o layout (colunas e tipos).
 _mapa = {"quando": 0, "objetos": {}}
+_RX_NOME_SIMPLES = re.compile(r"[A-Za-z0-9_]+")
 
 
 def mapa_objetos(validade_s=60):
-    """UMA consulta traz todas as tabelas PLHDWA e as tags de cada uma:
-       plhdwa_cod_objeto (obrigatória) · plhdwa_execucao (DESPACHANTE | JOB) · plhdwa_tipo_job.
-    Evita uma consulta por objeto: com centenas de objetos pendentes, o ciclo do despachante ficaria lento."""
+    """UMA consulta traz a ctl_parametros inteira (cache de validade_s): {código: [linhas]}. Mais de uma linha
+    para o mesmo código é erro de cadastro (o Delta não impede chave duplicada), tratado em metadados()."""
     with _trava_cache:
         if time.time() - _mapa["quando"] < validade_s:
             return _mapa["objetos"]
-    # um catálogo por vez (cada catálogo tem o seu information_schema); parâmetro catalogos_objetos
-    linhas = []
-    for cat in CTX["catalogos_objetos"]:
-        linhas += sql(f"""SELECT concat_ws('.', catalog_name, schema_name, table_name) AS t, tag_name, tag_value
-                          FROM `{cat}`.information_schema.table_tags
-                          WHERE tag_name IN ('plhdwa_cod_objeto', 'plhdwa_execucao', 'plhdwa_tipo_job')""").collect()
-    tags = {}
-    for r in linhas:
-        tags.setdefault(r.t, {})[r.tag_name] = r.tag_value
     objetos = {}
-    for t, tg in tags.items():
-        cod = tg.get("plhdwa_cod_objeto", "")
-        if not cod.isdigit():
-            continue
-        o = objetos.setdefault(int(cod), {"tabelas": []})
-        o["tabelas"].append(t)
-        o["execucao"] = (tg.get("plhdwa_execucao") or "DESPACHANTE").upper()
-        o["tipo_job"] = (tg.get("plhdwa_tipo_job") or "PERFORMANCE_OPTIMIZED").upper()
+    for r in CTX["spark"].table(fq("ctl_parametros")).collect():
+        objetos.setdefault(int(r.cod_objeto), []).append(r.asDict())
     with _trava_cache:
         _mapa.update(quando=time.time(), objetos=objetos)
     return objetos
 
 
+def _linha_objeto(cod):
+    """A linha do objeto na ctl_parametros (None se não houver exatamente uma)."""
+    linhas = mapa_objetos().get(cod, [])
+    return linhas[0] if len(linhas) == 1 else None
+
+
+def _nome_tabela(o):
+    return f"{o['catalogo_destino']}.{o['schema_destino']}.{o['tabela_destino']}"
+
+
 def tabela_do_objeto(cod):
-    """Tabela destino do objeto (None se não houver exatamente uma cadastrada)."""
-    tabelas = mapa_objetos().get(cod, {}).get("tabelas", [])
-    return tabelas[0] if len(tabelas) == 1 else None
+    """Tabela destino do objeto (None se não houver exatamente uma linha na ctl_parametros)."""
+    o = _linha_objeto(cod)
+    return _nome_tabela(o) if o else None
 
 
 def execucao_do_objeto(cod):
-    """(modo, tipo_job) do objeto. Objeto sem tabela cadastrada roda no despachante (e dá ERRO_CADASTRO)."""
-    o = mapa_objetos().get(cod, {})
-    modo = o.get("execucao", "DESPACHANTE")
-    return (modo if modo in MODOS else "DESPACHANTE"), o.get("tipo_job", "PERFORMANCE_OPTIMIZED")
+    """(modo, tipo_job) do objeto. Objeto sem linha na ctl_parametros roda no despachante (e dá ERRO_CADASTRO)."""
+    o = _linha_objeto(cod) or {}
+    modo = (o.get("execucao") or "DESPACHANTE").upper()
+    return (modo if modo in MODOS else "DESPACHANTE"), (o.get("tipo_job") or "PERFORMANCE_OPTIMIZED").upper()
 
 
-def metadados(cod):
+def objetos_inativos():
+    """Códigos com ativo = false: os arquivos deles ficam parados na pasta de CTL até o objeto voltar a ativo."""
+    return {cod for cod, linhas in mapa_objetos().items() if len(linhas) == 1 and linhas[0].get("ativo") is False}
+
+
+def metadados(cod, validade_s=60):
+    """Linha do objeto na ctl_parametros + layout da tabela destino, conferidos antes da carga (ERRO_CADASTRO se
+    não baterem). Cache de validade_s: um UPDATE na ctl_parametros vale sem reiniciar o despachante."""
     with _trava_cache:
-        if cod in _cache_meta:
-            return _cache_meta[cod]
-    achadas = mapa_objetos().get(cod, {"tabelas": []})["tabelas"]
-    if len(achadas) != 1:
-        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: {len(achadas)} tabela(s) com a tag plhdwa_cod_objeto {achadas}")
-    t = achadas[0]
-    props = {r.key: r.value for r in sql(f"SHOW TBLPROPERTIES {t}").collect()}
-    meta = {"tabela": t, "props": props, "schema": CTX["spark"].table(t).schema,
-            "tipo": props.get("plhdwa.tipo_carga", "FATO"),
-            "col_data": props.get("plhdwa.col_data_mov", ""), "col_inst": props.get("plhdwa.col_instituicao", "")}
+        c = _cache_meta.get(cod)
+        if c and time.time() - c[0] < validade_s:
+            return c[1]
+    linhas = mapa_objetos(validade_s).get(cod, [])
+    if len(linhas) != 1:
+        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: {len(linhas)} linha(s) na {fq('ctl_parametros')} (esperado 1)")
+    o = linhas[0]
+    partes = (o.get("catalogo_destino"), o.get("schema_destino"), o.get("tabela_destino"))
+    if not all(p and _RX_NOME_SIMPLES.fullmatch(p) for p in partes):
+        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: destino inválido na ctl_parametros {partes}")
+    t = _nome_tabela(o)
+    try:
+        schema = CTX["spark"].table(t).schema
+    except Exception as e:
+        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: tabela destino {t} não encontrada ({str(e)[:300]})")
+    tipo = (o.get("tipo_carga") or "").upper()
+    if tipo not in ("FATO", "DIM"):
+        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: tipo_carga {o.get('tipo_carga')!r} (use FATO ou DIM)")
+    nomes = {f.name.lower(): f.name for f in schema.fields}
+    cols = {}
+    for chave in ("col_data_mov", "col_instituicao"):
+        v = o.get(chave) or ""
+        if tipo == "FATO" and v.lower() not in nomes:
+            raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: {chave} = {v!r} não é coluna de {t}")
+        cols[chave] = nomes.get(v.lower(), v)
+    meta = {"tabela": t, "params": o, "schema": schema, "tipo": tipo,
+            "col_data": cols["col_data_mov"], "col_inst": cols["col_instituicao"]}
     with _trava_cache:
-        _cache_meta[cod] = meta
+        _cache_meta[cod] = (time.time(), meta)
     return meta
 
 
@@ -431,7 +450,11 @@ def metadados(cod):
 # 5. Leitura do DAT
 # =============================================================================
 def _p(meta, chave, padrao=""):
-    return meta["props"].get(f"plhdwa.arquivo.{chave}", padrao)
+    """Opção do arquivo na linha do objeto (ctl_parametros); vazia/nula = padrão. Booleanos viram "true"/"false"."""
+    v = meta["params"].get(chave)
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return padrao if v in (None, "") else str(v)
 
 
 def _leitura(arq, meta):
@@ -455,7 +478,7 @@ def _leitura(arq, meta):
 
 
 def ler_dat(arq, meta):
-    """CSV nativo, com as opções das TBLPROPERTIES e o schema da tabela. FAILFAST: linha inválida = erro.
+    """CSV nativo, com as opções do arquivo da ctl_parametros e o schema da tabela. FAILFAST: linha inválida = erro.
     Com a limpeza ativa, lê o arquivo limpo (pasta_tmp); sem ela, o DAT original (com ESCAPECHAR e sem aspas,
     usa ler_dat_escape)."""
     if arq.get("limpeza_modo") == "DIRETA":
@@ -502,7 +525,7 @@ def ler_header(arq):
 
 # =============================================================================
 # 5b. Limpeza do DAT (pedido do cliente): as 3 regex do cliente antes da carga. Modo por tabela
-#     (plhdwa.arquivo.limpeza_modo):
+#     (coluna limpeza_modo da ctl_parametros):
 #       CLIENTE (padrão) abordagem do cliente: tmp em partes paralelas + multiLine, sem header nas partes e com os
 #                     registros cortados na fronteira entre partes reunidos (preparar_cliente);
 #       AUTO          conta as linhas com aspa aberta: nenhuma -> PARALELA; alguma -> CLIENTE;
@@ -518,22 +541,17 @@ _RX_LIMPEZA = [(r'\\(?![\\\'"|nrt])', ''),   # barra que não escapa \ ' " | n r
 
 
 def limpeza_ativa(meta):
-    """TBLPROPERTY plhdwa.arquivo.limpeza da tabela; sem ela, o parâmetro limpeza_dat."""
-    v = meta["props"].get("plhdwa.arquivo.limpeza")
-    return str(v if v not in (None, "") else CTX["limpeza_dat"]).lower() == "true"
+    """Coluna limpeza da ctl_parametros; nula, o parâmetro limpeza_dat."""
+    return _p(meta, "limpeza", str(CTX["limpeza_dat"])).lower() == "true"
 
 
 MODOS_LIMPEZA = ("CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA")
 
 
 def modo_limpeza(meta):
-    """plhdwa.arquivo.limpeza_modo (CLIENTE padrão). Compatível com plhdwa.arquivo.limpeza_multilinha:
-    true = MULTILINHA, false = PARALELA."""
+    """Coluna limpeza_modo da ctl_parametros (nula = CLIENTE)."""
     m = _p(meta, "limpeza_modo").upper()
-    if m in MODOS_LIMPEZA:
-        return m
-    antigo = _p(meta, "limpeza_multilinha").lower()
-    return {"true": "MULTILINHA", "false": "PARALELA"}.get(antigo, "CLIENTE")
+    return m if m in MODOS_LIMPEZA else "CLIENTE"
 
 
 def caminho_tmp(arq):
@@ -1194,7 +1212,7 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
         pend.append((arq, "ROTEADO", {"fila": modo, "tipo_job": tipo_job, "ts": roteado_ts}))
     carregou = False
     try:
-        meta = metadados(arq["cod"])                    # ERRO_CADASTRO se o código não tem tabela
+        meta = metadados(arq["cod"])                    # ERRO_CADASTRO se a ctl_parametros não bate com o destino
         insts, tamanho = validar_ctl(arq, _p(meta, "header", "true") == "true")
         qtd_anterior, ja_carregado, ultima = info_arquivo(arq)
 

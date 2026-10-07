@@ -22,14 +22,14 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
 | `src/despachante.py` | Lote: vaga por arquivo, preenchida na hora; modo por objeto (DESPACHANTE/JOB); cadeia mais longa primeiro |
 | `src/carga_arquivo.py` | Job independente: começa no arquivo recebido e segue com os próximos do mesmo objeto |
 | `src/vigia.py` | Religa o despachante se houver CTL parado (ex.: depois de um DESBLOQUEIO) |
-| `src/pos_deploy.py` | Instalação idempotente: tabelas/visões, ids dos jobs, GRANTs |
+| `src/pos_deploy.py` | Instalação idempotente: tabelas/visões (inclusive a `ctl_parametros`), ids dos jobs, GRANTs, conferência do cadastro |
 | `src/testar_controle_db2.py` | Testa conexão, tabela e comando da controle no Db2 |
 | `sql/01_tabelas_operacionais.sql` | Tabelas e visões operacionais (executado pelo pós-deploy, com as variáveis) |
 | `sql/02_db2_controle_ddl.sql` | DDL da tabela da controle no Db2 (para o DBA) |
 | `sql/02_db2_controle_merge.sql` | Comando que grava a controle (editável pelo DBA; 14 parâmetros) |
 | `sql/02_db2_controle_merge_tabela_controle.sql` | Variante para uma tabela no layout `CONTROLE` genérico |
 | `dashboards/` | Consultas (`datasets.sql`) e gerador dos `.lvdash.json` |
-| `ferramentas/` | Cadastro de objetos: DDL do Netezza → tabela Delta com metadados; execução de SQL; cadastro em lote |
+| `ferramentas/` | Cadastro de objetos: DDL do Netezza → tabela Delta + linha na `ctl_parametros`; execução de SQL; cadastro em lote |
 | `testes/` | Gerador de arquivos de teste (usado pelo job de teste de tempo) |
 
 ## 2. Pré-requisitos (uma vez por ambiente)
@@ -85,8 +85,8 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
    ambiente `BUNDLE_VAR_svc_hash`), o deploy para com "no value assigned to required variable svc_hash".
    - Quem faz o deploy: o próprio SP (recomendado no CI/CD) ou um usuário com o papel **Service Principal: User**
      nesse SP.
-   - O SP precisa de: `USE CATALOG`/`USE SCHEMA`/`CREATE TABLE` no catálogo das tabelas operacionais, `MODIFY` e
-     `SELECT` nas tabelas destino, `READ FILES` e `WRITE FILES` na external location da landing (ou `READ VOLUME`
+   - O SP precisa de: `USE CATALOG`/`USE SCHEMA`/`CREATE TABLE` no catálogo das tabelas operacionais (e
+     `CREATE SCHEMA`, se o schema ainda não existir), `USE CATALOG`/`USE SCHEMA` e `SELECT`/`MODIFY` nas tabelas destino, `READ FILES` e `WRITE FILES` na external location da landing (ou `READ VOLUME`
      e `WRITE VOLUME`), `READ` no secret scope do Db2 e `CAN_USE` no SQL warehouse.
    - Os dashboards não usam o `run_as`: as consultas rodam com a credencial de quem publica (ou de quem vê,
      conforme a publicação).
@@ -110,7 +110,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 
 | Grupo | Variáveis |
 |---|---|
-| Onde ficam as coisas | `catalogo`, `schema`, `catalogos_objetos` (catálogos das tabelas destino), `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
+| Onde ficam as coisas | `catalogo`, `schema`, `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
 | Controle (Db2) | `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
 | Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min` |
 | Identidade | `svc_hash` (application ID do service principal: pasta do bundle e `run_as` dos jobs) |
@@ -119,31 +119,63 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 
 Ajustes **sem deploy**, feitos pelo owner:
 - vagas por modo: `UPDATE <catalogo>.<schema>.ctl_execucao SET max_simult = 24 WHERE modo = 'DESPACHANTE'`;
-- modo de um objeto: `ALTER TABLE <tabela_destino> SET TAGS ('plhdwa_execucao' = 'JOB', 'plhdwa_tipo_job' = 'STANDARD')`.
+- parâmetros de um objeto (modo, colunas, formato, limpeza, ativo): `UPDATE` na `ctl_parametros` (seção 5), por exemplo
+  `UPDATE <catalogo>.<schema>.ctl_parametros SET execucao = 'JOB', tipo_job = 'STANDARD' WHERE cod_objeto = 1230`.
+  Vale em até 1 minuto, sem deploy.
 
-## 5. Cadastrar objetos (sem tabela de cadastro)
+## 5. Cadastrar objetos (tabela `ctl_parametros`)
 
-Os metadados de cada objeto ficam na **própria tabela destino**: o schema é o layout do arquivo, a tag
-`plhdwa_cod_objeto` é o código, as tags `plhdwa_execucao`/`plhdwa_tipo_job` dizem onde roda e as
-`TBLPROPERTIES plhdwa.*` trazem tipo de carga e formato do arquivo, lidos da DDL do Netezza.
+Os parâmetros de cada objeto ficam numa linha da **`<catalogo>.<schema>.ctl_parametros`** (criada pelo pós-deploy).
+O motor **não usa tags nem TBLPROPERTIES** (só a tag `OWNER`, de governança). Da tabela destino ele usa apenas o
+layout: colunas, ordem e tipos.
+
+| Grupo | Colunas | Vazio (NULL) = |
+|---|---|---|
+| Chave | `cod_objeto` (código do CTL; 1 linha por código) | obrigatório |
+| Destino | `catalogo_destino`, `schema_destino`, `tabela_destino` | obrigatório |
+| Carga | `tipo_carga` (`FATO` = REPLACE WHERE data de movimento + instituições do CTL · `DIM` = substitui a tabela), `col_data_mov`, `col_instituicao` | FATO exige as duas colunas |
+| Execução | `execucao` (`DESPACHANTE` · `JOB`), `tipo_job` (`PERFORMANCE_OPTIMIZED` · `STANDARD`), `ativo` | `DESPACHANTE`, `PERFORMANCE_OPTIMIZED`, `true` |
+| Formato do arquivo | `delimitador`, `encoding`, `header`, `escape`, `quote`, `null_value`, `date_format`, `timestamp_format` | `\|`, `ISO-8859-15`, `true`, sem, sem, vazio, `yyyy-MM-dd`, `yyyy-MM-dd HH:mm[:ss]` |
+| Limpeza (5b) | `limpeza`, `limpeza_modo`, `limpeza_quote` | variável `limpeza_dat`, `CLIENTE`, `'` |
+| Informativo | `tabela_origem` (Netezza), `observacao`, `alterado_por`, `alterado_em` | — |
+
+- **CHECK** na tabela recusam valor inválido no próprio `INSERT`/`UPDATE` (tipo de carga, modo, tipo de job, modo
+  de limpeza, FATO sem as colunas).
+- **Antes de cada carga** o motor confere a linha: código em exatamente 1 linha, tabela destino existente e, na FATO,
+  colunas existentes. Se não bater: `ERRO_CADASTRO` com a causa e nada é gravado. O pós-deploy lista as
+  inconsistências.
+- **`ativo = false`** pausa o objeto: os arquivos ficam na pasta de CTL, sem erro, e são carregados quando ele
+  voltar a `true`.
+- Mudanças valem em até 1 minuto (cache do motor), sem deploy.
+
+O `converter_ddl_netezza.py` gera, a partir da DDL do Netezza, o `CREATE TABLE` da tabela destino e o `MERGE` da
+linha do objeto na `ctl_parametros` (formato do arquivo lido do bloco `USING`):
 
 ```bash
 cd ferramentas
 # 1 objeto
 python3 converter_ddl_netezza.py exemplos/ddl_external_dwa_ccr_fatparcela.sql --catalogo <cat> --schema <sch> \
-        --tabela fat_parcela --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
+        --tabela fat_parcela --catalogo-controle <catalogo> --schema-controle <schema> \
+        --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
         > cadastro/1230_fat_parcela.sql
 python3 executar_sql.py cadastro/1230_fat_parcela.sql --warehouse <warehouse_id>
 # vários objetos (csv: cod;ddl;tabela;tipo;col_data;col_inst;execucao;tipo_job)
-./cadastrar_em_lote.sh exemplos/objetos.csv <pasta_das_ddls> <cat> <sch> [warehouse_id]
+./cadastrar_em_lote.sh exemplos/objetos.csv <pasta_das_ddls> <cat> <sch> <catalogo> <schema> [warehouse_id]
 ```
-O catálogo das tabelas destino precisa estar em `catalogos_objetos` (ou ser o mesmo de `catalogo`).
+`<catalogo>`/`<schema>` = variáveis `catalogo` e `schema` do bundle (onde está a `ctl_parametros`).
+
+Conferir o cadastro:
+```sql
+SELECT cod_objeto, concat_ws('.', catalogo_destino, schema_destino, tabela_destino) AS destino, tipo_carga,
+       col_data_mov, col_instituicao, execucao, tipo_job, ativo
+FROM <catalogo>.<schema>.ctl_parametros ORDER BY cod_objeto;
+```
 
 ## 5b. Limpeza do DAT antes da carga (pedido do cliente)
 
 Com `limpeza_dat = true` (padrão), cada DAT passa por esta etapa antes da carga (`preparar_dat` no motor):
 
-1. lido linha a linha **com o encoding da tabela** (`plhdwa.arquivo.encoding`, LATIN9 do Netezza);
+1. lido linha a linha **com o encoding do objeto** (coluna `encoding` da `ctl_parametros`, LATIN9 do Netezza);
 2. as 3 regex do cliente, nesta ordem (as mesmas do código recebido, em `_RX_LIMPEZA`):
    `r'\\(?![\\\'"|nrt])'` → vazio (barra que não escapa nada sai) · `r'\\\|'` → `|` · `r'\\null'` → vazio (NULL);
 3. gravado em `<landing>/<pasta_tmp>/<nome do arquivo>/` e lido para a carga com header, delimitador da tabela,
@@ -160,7 +192,7 @@ Ajustes em relação ao código recebido (medidos no teste com 6 milhões de reg
 | `wholeFile` removido | opção inexistente no leitor de texto (era ignorada) |
 | Schema da tabela + `FAILFAST` + conferência do header | tudo como texto e linha inválida descartada sem erro |
 
-Modos (TBLPROPERTY `plhdwa.arquivo.limpeza_modo`, também pelo `converter_ddl_netezza.py --limpeza-modo`):
+Modos (coluna `limpeza_modo` da `ctl_parametros`, também pelo `converter_ddl_netezza.py --limpeza-modo`):
 
 | Modo | Como funciona | Quando usar |
 |---|---|---|
@@ -184,7 +216,7 @@ Partes fixas (`limpeza_pedaco_mb`, padrão `0` = divisão do Spark) são opciona
 2× mais lento). Com qualquer divisão, antes de gravar o motor confere se as linhas da fronteira e o número de partes são
 os esperados; se não, refaz (até 3 vezes) e, persistindo, para sem gravar.
 
-Outras propriedades: `plhdwa.arquivo.limpeza` (liga/desliga a limpeza só para a tabela) e `plhdwa.arquivo.limpeza_quote`
+Outras colunas da `ctl_parametros`: `limpeza` (liga/desliga a limpeza só para o objeto) e `limpeza_quote`
 (aspas dos textos; padrão `'`). Detalhes da leitura: fim de linha = LF (o CR escapado do Netezza, `\<CR>`, é dado
 e fica no valor; CR no fim da linha, de arquivo CRLF, sai) e a regex só roda nas linhas com barra invertida.
 
@@ -237,7 +269,7 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
 - **Prioridade:** entre os objetos que podem andar, vai primeiro o que tem mais trabalho pendente.
 - **Job independente** segue com o mesmo objeto (até `job_max_arquivos`/`job_max_minutos`): o arranque é
   pago uma vez por objeto.
-- **Carga** sempre com `replaceWhere` (DIM usa `1 = 1`), para gravar só os dados e preservar tags,
-  propriedades e grants da tabela.
+- **Carga** sempre com `replaceWhere` (DIM usa `1 = 1`), para gravar só os dados e preservar a tag `OWNER`,
+  as propriedades e os grants da tabela. Destino, colunas do `replaceWhere` e formato vêm da `ctl_parametros`.
 - **DAT vazio** (0 bytes, só header ou em branco) = `ERRO_DAT_VAZIO`, antes da carga.
 - **Sem nova tentativa automática** nos jobs: erro = objeto travado + e-mail; outros objetos seguem.

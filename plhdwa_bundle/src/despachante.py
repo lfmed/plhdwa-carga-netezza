@@ -2,9 +2,9 @@
 # MAGIC %md
 # MAGIC # PLHDWA · Despachante (cada execução = 1 lote)
 # MAGIC Disparado pela chegada de CTL na pasta `pasta_ctl` da landing (padrão `ctl/`). Regras:
-# MAGIC - o **modo de execução vem da tag do objeto** (`plhdwa_execucao`):
+# MAGIC - o **modo de execução vem da `ctl_parametros`** (coluna `execucao` do objeto):
 # MAGIC   - **DESPACHANTE**: o arquivo roda aqui mesmo, numa thread;
-# MAGIC   - **JOB**: dispara um job independente (`plhdwa_tipo_job` escolhe Standard ou Performance), que segue
+# MAGIC   - **JOB**: dispara um job independente (`tipo_job` escolhe Standard ou Performance), que segue
 # MAGIC     sozinho com os próximos arquivos do mesmo objeto;
 # MAGIC - **a vaga é do arquivo, não do objeto**: cada thread processa 1 arquivo e devolve a vaga; o despachante
 # MAGIC   preenche a vaga na hora (não espera o próximo ciclo);

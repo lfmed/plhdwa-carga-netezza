@@ -184,7 +184,7 @@
   <h3>Definições finais</h3>
   <table>
     <tr><th>#</th><th>Definição</th><th>Como ficou</th></tr>
-    <tr><td>1</td><td>Sem filas P/M/G: jobs no despachante ou independentes, comandados por parâmetro</td><td>Tags <code>plhdwa_execucao</code> (DESPACHANTE | JOB) e <code>plhdwa_tipo_job</code> (PERFORMANCE_OPTIMIZED | STANDARD) na tabela destino de cada objeto; vagas por modo em <code>ctl_execucao</code> (seção 10)</td></tr>
+    <tr><td>1</td><td>Sem filas P/M/G: jobs no despachante ou independentes, comandados por parâmetro</td><td>Colunas <code>execucao</code> (DESPACHANTE | JOB) e <code>tipo_job</code> (PERFORMANCE_OPTIMIZED | STANDARD) da <code>ctl_parametros</code> (até 06/10 eram tags na tabela destino; decisão 18); vagas por modo em <code>ctl_execucao</code> (seção 10)</td></tr>
     <tr><td>2</td><td>DAT que não vem ou vem em branco gera erro</td><td><code>ERRO_PAR</code> (sem DAT) e <code>ERRO_DAT_VAZIO</code> (0 bytes, só header ou em branco), checados <b>antes</b> da carga</td></tr>
     <tr><td>3</td><td>A controle registra início, erro e conclusão</td><td>Por arquivo: <code>CONCLUIDO</code> (quantidade, início, fim) ou <code>ERRO</code> (mensagem). <i>Revisto na decisão 14:</i> o início deixou de ir para o Db2 (padrão); com <code>db2_registrar_inicio = true</code> volta o <code>EM_PROCESSAMENTO</code> e, sem ele, o arquivo não é carregado</td></tr>
     <tr><td>4</td><td>Logs com quantidade, início e fim, e lotes em andamento</td><td><code>log_carga_evento</code> (por arquivo), <code>log_lote</code> + <code>v_lote</code> (EM_ANDAMENTO, CONCLUIDO, CONCLUIDO_COM_ERROS, INTERROMPIDO)</td></tr>
@@ -201,6 +201,7 @@
     <tr><td>15</td><td>A landing no cliente é o S3, sem volume</td><td>Variável <code>landing_tipo</code>: <code>S3</code> (padrão, <code>landing = s3://&lt;bucket&gt;/&lt;prefixo&gt;</code>) ou <code>VOLUME</code> (<code>/Volumes/...</code>). No S3 o acesso passa pela external location do Unity Catalog (obrigatória no serverless), com file events para o gatilho e READ FILES/WRITE FILES para a identidade dos jobs. O motor confere se o caminho combina com o tipo; o resto do código é o mesmo (dbutils.fs e spark.read)</td></tr>
     <tr><td>16</td><td>Pastas dentro do prefixo do S3: dados (.dat), ctl (.CTL), erro (arquivos com erro) e tmp (transformação temporária)</td><td>Variáveis <code>pasta_dat</code> (<code>dados</code>), <code>pasta_ctl</code> (<code>ctl</code>), <code>pasta_erro</code> (<code>erro</code>) e <code>pasta_tmp</code> (<code>tmp</code>). O gatilho do despachante olha só <code>ctl/</code>; o motor lê <code>dados/</code> e <code>ctl/</code>, move o par com erro para <code>erro/</code> e não lê nem grava em <code>tmp/</code> (só confere que as 4 são diferentes)</td></tr>
     <tr><td>17</td><td>Antes de gravar, limpar o DAT com as regex do cliente, gravar o arquivo ajustado em tmp, ler com header, delimitador, multiLine e aspas simples, e apagar a tmp no fim</td><td>Etapa <code>preparar_dat</code> antes da pré-checagem (variável <code>limpeza_dat</code>, padrão <code>true</code>; por tabela <code>plhdwa.arquivo.limpeza</code>). Código do cliente com ajustes provados em teste: <b>header retirado antes de gravar a tmp</b> (com várias partes, o header de cada parte descartava 1 registro: 12 perdidos em 6 milhões), <b>registros cortados na fronteira entre partes reunidos</b>, <b>leitura com o encoding da tabela</b> (o <code>read.text</code> corrompia 100% dos acentos LATIN9) e schema + FAILFAST. Modo padrão <b>CLIENTE</b> (<code>plhdwa.arquivo.limpeza_modo</code>): a abordagem do cliente em partes paralelas + multiLine, com o header retirado antes de gravar e os registros cortados na fronteira entre partes reunidos (achados numa passada em paralelo, pela posição dentro de cada pedaço do arquivo). O modo de 1 arquivo (<code>coalesce(1)</code>) é lento e, no teste de 80 GB, não manteve a ordem das linhas. Antes de gravar, o motor confere se as linhas da fronteira e o número de partes são os esperados (se não, refaz até 3 vezes e, persistindo, para sem gravar). Partes fixas (<code>limpeza_pedaco_mb</code>, padrão 0) são opcionais: com 4 MB ficou cerca de 2× mais lento. A tmp é apagada sempre; sobras de execução que caiu são apagadas no lote seguinte. Detalhes e testes: <code>documentacao_tecnica_plhdwa.html</code>, seção 3b</td></tr>
+    <tr><td>18</td><td>Parâmetros de controle de cada objeto expostos numa tabela (<code>ctl_parametros</code>), inclusive catálogo, schema e tabela destino; não usar mais tags nem TBLPROPERTIES para isso (pedido de 07/10/2026; substitui o F9 e as tags da decisão 1)</td><td>Tabela <code>&lt;catalogo&gt;.&lt;schema&gt;.ctl_parametros</code>, criada pelo pós-deploy: 1 linha por <code>cod_objeto</code> com destino (<code>catalogo_destino</code>, <code>schema_destino</code>, <code>tabela_destino</code>), <code>tipo_carga</code>, <code>col_data_mov</code>, <code>col_instituicao</code>, <code>execucao</code>, <code>tipo_job</code>, <code>ativo</code>, formato do arquivo (<code>delimitador</code>, <code>encoding</code>, <code>header</code>, <code>escape</code>, <code>quote</code>, <code>null_value</code>, <code>date_format</code>, <code>timestamp_format</code>) e limpeza (<code>limpeza</code>, <code>limpeza_modo</code>, <code>limpeza_quote</code>); vazio = padrão do motor. CHECK recusam valor inválido no próprio UPDATE; antes de cada carga o motor confere código em 1 linha, tabela e colunas existentes (<code>ERRO_CADASTRO</code> com a causa). <code>ativo = false</code> pausa o objeto (arquivos parados em <code>ctl/</code>, sem erro). Da tabela destino só vem o layout; fica só a tag <code>OWNER</code> (governança). Sai a variável <code>catalogos_objetos</code>. O conversor gera o <code>CREATE TABLE</code> + o <code>MERGE</code> da linha</td></tr>
   </table>
   <div class="callout">Manual de operação, cadastro de novos arquivos e o cenário “1 arquivo → +10 → +300” ilustrado: <code>manual_operacao_plhdwa.html</code>.</div>
   <div class="callout">Cada notebook e função do ingestor, e a prova de que a carga FATO troca só a data (ou a data + instituições do CTL) e a DIM troca tudo: <code>documentacao_tecnica_plhdwa.html</code>.</div>
@@ -217,7 +218,7 @@
     <tr><td>3</td><td>Grandes não pagam arranque por arquivo (D)</td><td>Job independente segue com o mesmo objeto até <code>job_max_arquivos</code> (20) ou <code>job_max_minutos</code> (60)</td></tr>
     <tr><td>4</td><td>max_simult 24 no despachante e 24 em job independente</td><td><code>ctl_execucao</code> 24 / 24</td></tr>
     <tr><td>5</td><td>Cliente usa Db2, sem Lakebase; driver ibm_db, sem JVM</td><td>Conexão por variáveis + secret scope; pool de conexões (o Db2 limita conexões); comando em <code>sql/02_db2_controle_merge.sql</code></td></tr>
-    <tr><td>6</td><td>Bundle comentado e parametrizável para entregar</td><td>Variáveis para tudo (inclui <code>catalogos_objetos</code>); instalação idempotente; job “testar controle Db2”; pacote zip</td></tr>
+    <tr><td>6</td><td>Bundle comentado e parametrizável para entregar</td><td>Variáveis para tudo; instalação idempotente; job “testar controle Db2”; pacote zip</td></tr>
   </table>
 
   <details>
@@ -246,7 +247,7 @@
     <tr><td>F6</td><td>Data de movimento</td><td><code>SK_TMO_MVM</code> inteiro <code>yyyyMMdd</code> (20250110)</td><td><code>REPLACE WHERE SK_TMO_MVM = 20250110</code>; compara com a data do CTL como inteiro.</td></tr>
     <tr><td>F7</td><td>Instituição</td><td><code>SK_INS</code> com valores 501172…501208 (chave substituta)</td><td>Coluna de instituição = <code>SK_INS</code>; a lista do CTL precisa usar o mesmo domínio (V3).</td></tr>
     <tr><td>F8</td><td>NULL</td><td>Um <code>DS_CON_MAE</code> vazio; <code>NULLVALUE</code> não informado</td><td>Vazio = NULL (padrão do leitor); confirmar (V4).</td></tr>
-    <tr><td>F9</td><td>Metadados</td><td>“Não serão salvos em tabela, e sim buscados na tabela Delta associada”</td><td>Tag <code>plhdwa_cod_objeto</code> + TBLPROPERTIES + schema; <code>ctl_objeto</code> saiu do desenho (seção 8).</td></tr>
+    <tr><td>F9</td><td>Metadados</td><td>“Não serão salvos em tabela, e sim buscados na tabela Delta associada”</td><td>Até 06/10: tag <code>plhdwa_cod_objeto</code> + TBLPROPERTIES + schema. <b>Substituído pela decisão 18 (07/10)</b>: parâmetros na <code>ctl_parametros</code>; da tabela destino só vem o layout (seção 8).</td></tr>
     <tr><td>F10</td><td>Db2 por enquanto</td><td>“Simule o Db2 atualizando a tabela controle e uma instância Lakebase”</td><td>Confirmação síncrona grava em <code>db2_controle_sim</code> (Delta) e faz UPSERT em <code>controle.db2_controle</code> (Lakebase <code>&lt;instancia_lakebase&gt;</code>).</td></tr>
   </table>
   </details>
@@ -388,17 +389,17 @@
     <rect x="562" y="84" width="364" height="156" rx="10" class="box dbx"/>
     <text x="578" y="106" class="t">Despachante · 1 execução = 1 lote</text>
     <text x="578" y="124" class="s">⚡ File Arrival em ctl · serverless Performance Optimized</text>
-    <text x="578" y="146" class="s">• modo do objeto pela tag plhdwa_execucao</text>
+    <text x="578" y="146" class="s">• modo do objeto pela ctl_parametros (execucao)</text>
     <text x="578" y="163" class="s">• DESPACHANTE: 1 thread por arquivo (24 vagas)</text>
-    <text x="578" y="180" class="s">• JOB: run_now do job do tipo da tag (24 vagas)</text>
+    <text x="578" y="180" class="s">• JOB: run_now do job do tipo_job (24 vagas)</text>
     <text x="578" y="197" class="s">• 1 arquivo por objeto em andamento (ordem garantida)</text>
     <text x="578" y="214" class="s">• vaga livre = preenchida na hora · maior cadeia antes</text>
     <text x="578" y="231" class="s">• fica ativo enquanto houver pendente ou execução rodando</text>
 
     <rect x="562" y="262" width="364" height="160" rx="10" class="box dbx"/>
     <text x="578" y="284" class="t">Jobs independentes · seguem com o objeto</text>
-    <text x="578" y="302" class="s">objetos com plhdwa_execucao = JOB · mesmo lote</text>
-    <text x="578" y="324" class="s">• carga_arquivo_perf | carga_arquivo_std (tag plhdwa_tipo_job)</text>
+    <text x="578" y="302" class="s">objetos com execucao = JOB · mesmo lote</text>
+    <text x="578" y="324" class="s">• carga_arquivo_perf | carga_arquivo_std (tipo_job)</text>
     <text x="578" y="341" class="s">• compute isolado; arranque 1× por objeto (até 20 arq.)</text>
     <text x="578" y="358" class="s">• mesmo código das threads do despachante</text>
     <text x="578" y="375" class="s">• controle: CONCLUIDO | ERRO (fim)</text>
@@ -463,7 +464,7 @@
     <text x="270" y="572" class="al">⑨ controle por arquivo (CONCLUIDO · ERRO) no Db2 on-premises · ibm_db pelo NCC · pool de conexões</text>
   </svg>
   </div>
-  <div class="callout ok"><b>“Um arquivo em cada JOB”, onde faz sentido:</b> objetos com <code>plhdwa_execucao = JOB</code> têm uma execução de job por arquivo, com compute isolado e visibilidade no Jobs. Os demais (a grande maioria) rodam em threads dentro do despachante, sem arranque por arquivo. Quem decide é o cadastro do objeto, não o tamanho do arquivo.</div>
+  <div class="callout ok"><b>“Um arquivo em cada JOB”, onde faz sentido:</b> objetos com <code>execucao = JOB</code> na <code>ctl_parametros</code> têm uma execução de job por arquivo, com compute isolado e visibilidade no Jobs. Os demais (a grande maioria) rodam em threads dentro do despachante, sem arranque por arquivo. Quem decide é o cadastro do objeto, não o tamanho do arquivo.</div>
 </section>
 
 <!-- 4 -->
@@ -511,7 +512,7 @@
     <li><h4>Exportação <span class="who nz">Netezza · AWS</span></h4><p>O próprio Netezza grava o DAT em <code>dados/</code> e depois o CTL em <code>ctl/</code>, em ordem de data de geração.</p></li>
     <li><h4>Disparo e lote <span class="who dbx">File Arrival</span></h4><p>O gatilho inicia o despachante (ou enfileira, se já houver um rodando). A execução é um <b>lote</b>: <code>log_lote</code> recebe INICIADO com os pendentes.</p></li>
     <li><h4>Ciclo do despachante</h4><p>A cada <code>ciclo_s</code> (~5–10 s): relê <code>ctl_execucao</code>, a pasta e os jobs; descarta concluídos e objetos travados ou já em processamento; agrupa por objeto e ordena por data de geração. <b>Entre um ciclo e outro</b>, cada vaga que libera é preenchida na hora com o que já está em memória.</p></li>
-    <li><h4>Modo de execução e prioridade</h4><p>Tag <code>plhdwa_execucao</code>: <b>DESPACHANTE</b> → 1 thread para <b>1 arquivo</b>, que devolve a vaga ao terminar; <b>JOB</b> → <code>run_now</code> do job do tipo da tag <code>plhdwa_tipo_job</code>, que segue com os próximos arquivos do mesmo objeto. Vai primeiro o objeto com mais trabalho pendente. Sem vaga no modo, o objeto espera a próxima vaga.</p></li>
+    <li><h4>Modo de execução e prioridade</h4><p>Coluna <code>execucao</code> da <code>ctl_parametros</code>: <b>DESPACHANTE</b> → 1 thread para <b>1 arquivo</b>, que devolve a vaga ao terminar; <b>JOB</b> → <code>run_now</code> do job do tipo da coluna <code>tipo_job</code>, que segue com os próximos arquivos do mesmo objeto. Vai primeiro o objeto com mais trabalho pendente. Sem vaga no modo, o objeto espera a próxima vaga.</p></li>
     <li><h4>Validações</h4><p>CTL × nome, datas válidas, DAT presente (<code>ERRO_PAR</code>) e não vazio (<code>ERRO_DAT_VAZIO</code>), código cadastrado (<code>ERRO_CADASTRO</code>).</p></li>
     <li><h4>Início <span class="who db2">log</span></h4><p>Log: INICIADO (o arquivo aparece em “Em execução”). O Db2 não recebe o início (padrão, decisão 14). Só com <code>db2_registrar_inicio = true</code>: grava <code>EM_PROCESSAMENTO</code> para <b>este arquivo</b> e, se a controle não responder, <code>ERRO_DB2</code> e nada é carregado.</p></li>
     <li><h4>Sequência, header e pré-checagem</h4><p>Geração maior que a última carregada; header igual ao layout; amostra de 10 mil linhas com o detector de formato (arquivos grandes, ou o 1º de cada objeto no lote).</p></li>
@@ -591,18 +592,18 @@
 <!-- 8 -->
 <section id="metadados">
   <h2><span class="n">8</span>Metadados, lotes e log</h2>
-  <p class="lead">Não existe tabela de cadastro: os metadados de cada objeto ficam na tabela destino. As tabelas operacionais ficam em <code>&lt;catalogo&gt;.&lt;schema&gt;</code> (variáveis do bundle) e são criadas pelo pós-deploy a partir de <code>plhdwa_bundle/sql/01_tabelas_operacionais.sql</code>. As tabelas destino podem ficar em outros catálogos (variável <code>catalogos_objetos</code>).</p>
+  <p class="lead">Os parâmetros de cada objeto ficam na <code>ctl_parametros</code> (decisão 18): uma linha por código, com o catálogo, o schema e a tabela destino. Da tabela destino o motor só usa o layout. As tabelas operacionais ficam em <code>&lt;catalogo&gt;.&lt;schema&gt;</code> (variáveis do bundle) e são criadas pelo pós-deploy a partir de <code>plhdwa_bundle/sql/01_tabelas_operacionais.sql</code>. As tabelas destino podem ficar em qualquer catálogo (o nome completo está na linha).</p>
   <div class="grid g2">
-<pre><span class="c">-- metadados do objeto NA TABELA DESTINO (gerado por converter_ddl_netezza.py)</span>
+<pre><span class="c">-- tabela destino: só o layout (gerado por converter_ddl_netezza.py)</span>
 <span class="k">CREATE TABLE</span> &lt;schema&gt;.fat_parcela ( <span class="c">/* colunas na ordem do header */</span> )
-<span class="k">CLUSTER BY</span> (SK_TMO_MVM, SK_INS)
-<span class="k">TBLPROPERTIES</span> ('plhdwa.tipo_carga' = 'FATO', 'plhdwa.col_data_mov' = 'SK_TMO_MVM',
-  'plhdwa.col_instituicao' = 'SK_INS', 'plhdwa.arquivo.delimitador' = '|',
-  'plhdwa.arquivo.header' = 'true', 'plhdwa.arquivo.encoding' = 'ISO-8859-15', ...);
-<span class="k">ALTER TABLE</span> &lt;schema&gt;.fat_parcela <span class="k">SET TAGS</span> (
-  'OWNER' = 'PLHDWA', 'plhdwa_cod_objeto' = '1230',
-  'plhdwa_execucao' = 'DESPACHANTE',          <span class="c">-- ou JOB</span>
-  'plhdwa_tipo_job' = 'PERFORMANCE_OPTIMIZED'); <span class="c">-- ou STANDARD</span>
+<span class="k">CLUSTER BY</span> (SK_TMO_MVM, SK_INS);
+<span class="k">ALTER TABLE</span> &lt;schema&gt;.fat_parcela <span class="k">SET TAGS</span> ('OWNER' = 'PLHDWA');
+
+<span class="c">-- parâmetros do objeto (MERGE gerado pelo conversor; 1 linha por código)</span>
+&lt;schema&gt;.ctl_parametros: cod_objeto = 1230, destino = catálogo.&lt;schema&gt;.fat_parcela,
+  tipo_carga = 'FATO', col_data_mov = 'SK_TMO_MVM', col_instituicao = 'SK_INS',
+  execucao = 'DESPACHANTE' <span class="c">-- ou JOB</span>, tipo_job = 'PERFORMANCE_OPTIMIZED' <span class="c">-- ou STANDARD</span>,
+  ativo = true, delimitador = '|', header = true, encoding = 'ISO-8859-15', ...
 
 <span class="c">-- vagas por modo (só o owner altera)</span>
 <span class="k">CREATE TABLE</span> &lt;schema&gt;.ctl_execucao (
@@ -667,8 +668,9 @@ v_arquivo_concluido · v_projecao_termino</pre>
   <h3>Parâmetros</h3>
   <table>
     <tr><th>Onde</th><th>Parâmetro</th><th>Valores</th><th>Quem altera</th></tr>
-    <tr><td>Tag na tabela destino</td><td><code>plhdwa_execucao</code></td><td>DESPACHANTE (padrão) · JOB</td><td>Cadastro / owner</td></tr>
-    <tr><td>Tag na tabela destino</td><td><code>plhdwa_tipo_job</code></td><td>PERFORMANCE_OPTIMIZED (padrão) · STANDARD</td><td>Cadastro / owner</td></tr>
+    <tr><td><code>ctl_parametros</code></td><td><code>execucao</code></td><td>DESPACHANTE (padrão) · JOB</td><td>Cadastro / owner</td></tr>
+    <tr><td><code>ctl_parametros</code></td><td><code>tipo_job</code></td><td>PERFORMANCE_OPTIMIZED (padrão) · STANDARD</td><td>Cadastro / owner</td></tr>
+    <tr><td><code>ctl_parametros</code></td><td><code>ativo</code></td><td>true (padrão) · false = objeto pausado</td><td>Cadastro / owner</td></tr>
     <tr><td><code>ctl_execucao</code></td><td><code>max_simult</code></td><td>DESPACHANTE 24 · JOB 24 (objetos em paralelo)</td><td>Owner</td></tr>
     <tr><td>Bundle</td><td><code>ciclo_s</code></td><td>5 s (releitura da pasta, limites e jobs)</td><td>Deploy</td></tr>
     <tr><td>Bundle</td><td><code>job_max_arquivos</code> · <code>job_max_minutos</code></td><td>20 · 60</td><td>Deploy</td></tr>
@@ -880,6 +882,11 @@ v_arquivo_concluido · v_projecao_termino</pre>
     <tr><td>Decisão 17, modo CLIENTE, 06/10: arquivo de 80 GB com 5.633.850 registros em mais de uma linha</td><td>338 s (14,2 GB/min), 640 partes, 2 registros da fronteira reunidos; 1.126.770.000 registros, multilinha e acentos conferem; tmp vazia</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Decisão 17, modo CLIENTE, 06/10: dois arquivos de 80 GB (com e sem multilinha) liberados juntos</td><td>160 GB em 457 s da 1ª liberação ao fim do último (364 s e 354 s cada); tudo confere. O modo MULTILINHA (<code>coalesce(1)</code>) falhou no 80 GB (ordem das linhas)</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Decisão 17: estresse da fronteira, 3 GB com 50% dos registros em mais de uma linha</td><td>Divisão do Spark: 24 partes, 8 registros reunidos, 164 s. Partes de 4 MB: 768 partes, 205 reunidos, 197 s. 40.670.000 registros corretos nos dois</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 18 (ctl_parametros), 07/10: migração dos 85 objetos do ambiente interno (tags + TBLPROPERTIES → tabela)</td><td>85 linhas gravadas; o motor novo chegou aos mesmos valores efetivos do antigo em todos os campos de todos os objetos (0 diferenças); depois, 0 tags plhdwa_* e 0 propriedades plhdwa.* nas tabelas</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 18: CHECK e padrões da tabela</td><td>Recusados no próprio UPDATE: execucao, tipo_job, tipo_carga e limpeza_modo inválidos e FATO sem coluna de data; linha intacta depois das recusas; INSERT sem execucao/tipo_job/ativo grava DESPACHANTE, PERFORMANCE_OPTIMIZED e true</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 18: lote com 13 arquivos, sem nenhuma tag nas tabelas</td><td>FATO com CTL 0 e com lista de instituições, DIM, JOB Performance e JOB Standard, delimitador ';' vindo da tabela, limpeza = false e limpeza_modo = PARALELA: todos CONCLUIDO com as linhas dos arquivos. Sem linha, tabela inexistente, código em 2 linhas e coluna inexistente: ERRO_CADASTRO com a causa e nada gravado. ativo = false: arquivo parado em ctl/, sem status</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 18: mudança sem deploy</td><td>UPDATE execucao = JOB: o arquivo seguinte do objeto foi para o job independente; UPDATE ativo = true: o arquivo parado foi carregado no lote seguinte</td><td><span class="pill p-ok">Aprovado</span></td></tr>
+    <tr><td>Decisão 18: regressão da limpeza (casos funcionais e arquivo real DIM_BEM_IMOVEL) e ciclo do despachante</td><td>Mesmo resultado de antes (11/13 e 9/11, as 2 diferenças das regras do cliente; arquivo real 5/5 em CLIENTE e MULTILINHA). Ciclo do despachante: mediana 7,1 s (antes 6,8 s, com os 5 s de espera)</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Ponta a ponta: 44 arquivos em 3 lotes</td><td>44 linhas CONCLUIDO na controle, com início e fim; depois apagadas</td><td><span class="pill p-ok">Aprovado</span></td></tr>
     <tr><td>Limite de conexões do Db2 (15) com 22 threads</td><td>sem pool: 7 ERRO_DB2 no início (nada carregado); com pool de 8: 22 objetos em paralelo, 1,8 min, 0 erros</td><td><span class="pill p-ok">Aprovado após correção</span></td></tr>
     <tr><td>Job independente em máquina ARM (aarch64)</td><td>ibm_db não instala → ERRO_DB2 claro, sem carga (3 de 3 jobs no teste). Environment fixo na versão 1: 14/14 em dois lotes (3 jobs, 1 por objeto, 2,03 milhões de registros, controle no Db2 confirmada). Versão 6 + <code>ibm-db</code>: 3 de 3 jobs falharam na instalação</td><td><span class="pill p-ok">Resolvido (W1)</span></td></tr>
@@ -973,7 +980,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
   </ol>
   <table style="margin-top:12px">
     <tr><th>Grupo</th><th>Variáveis do bundle</th></tr>
-    <tr><td>Onde ficam as coisas</td><td><code>catalogo</code>, <code>schema</code>, <code>catalogos_objetos</code>, <code>landing</code>, <code>warehouse_id</code>, <code>fuso_horario</code></td></tr>
+    <tr><td>Onde ficam as coisas</td><td><code>catalogo</code>, <code>schema</code>, <code>landing</code>, <code>warehouse_id</code>, <code>fuso_horario</code></td></tr>
     <tr><td>Controle (Db2)</td><td><code>db2_modo</code>, <code>db2_host</code>, <code>db2_porta</code>, <code>db2_banco</code>, <code>db2_ssl</code>, <code>db2_certificado</code>, <code>db2_extra</code>, <code>db2_secret_scope</code>, <code>db2_chave_usuario</code>, <code>db2_chave_senha</code>, <code>db2_tabela</code>, <code>db2_comando</code>, <code>db2_max_conexoes</code>, <code>db2_tentativas</code>, <code>db2_espera_base_s</code></td></tr>
     <tr><td>Execução</td><td><code>max_simult_despachante</code>, <code>max_simult_job</code>, <code>ciclo_s</code>, <code>max_horas</code>, <code>max_threads</code>, <code>job_max_arquivos</code>, <code>job_max_minutos</code>, <code>precheck_linhas</code>, <code>precheck_min_mb</code>, <code>gatilho_intervalo_s</code>, <code>vigia_cron</code>, <code>vigia_parado_min</code></td></tr>
     <tr><td>Governança</td><td><code>owner_tag</code>, <code>grupo_owner</code>, <code>email_alertas</code></td></tr>

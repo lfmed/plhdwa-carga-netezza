@@ -26,7 +26,6 @@ resources:
       parameters:
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
-        - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: pasta_dat, default: "${var.pasta_dat}"}
@@ -81,7 +80,7 @@ resources:
             base_parameters: {job_id: "{{job.id}}", job_run_id: "{{job.run_id}}"}
 
     # -------------------------------------------------------------------------------------------------
-    # Job independente (objetos com plhdwa_execucao = JOB), tipo Performance Optimized: começa no arquivo
+    # Job independente (objetos com execucao = JOB na ctl_parametros), tipo Performance Optimized: começa no arquivo
     # recebido do despachante e segue com os próximos do mesmo objeto (até job_max_arquivos / job_max_minutos).
     plhdwa_carga_arquivo_perf:
       name: PLHDWA · carga arquivo · performance
@@ -99,7 +98,6 @@ resources:
         - {name: max_minutos, default: "${var.job_max_minutos}"}
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
-        - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: pasta_dat, default: "${var.pasta_dat}"}
@@ -139,7 +137,7 @@ resources:
             notebook_path: ../src/carga_arquivo.py
             base_parameters: {job_id: "{{job.id}}", job_run_id: "{{job.run_id}}", tipo_job: PERFORMANCE_OPTIMIZED}
 
-    # Mesmo código, tipo Standard (mais barato; arranque mais lento): objetos com plhdwa_tipo_job = STANDARD
+    # Mesmo código, tipo Standard (mais barato; arranque mais lento): objetos com tipo_job = STANDARD na ctl_parametros
     plhdwa_carga_arquivo_std:
       name: PLHDWA · carga arquivo · standard
       tags: {OWNER: "${var.owner_tag}"}
@@ -173,7 +171,6 @@ resources:
       parameters:
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
-        - {name: catalogos_objetos, default: "${var.catalogos_objetos}"}
         - {name: landing, default: "${var.landing}"}
         - {name: landing_tipo, default: "${var.landing_tipo}"}
         - {name: pasta_dat, default: "${var.pasta_dat}"}

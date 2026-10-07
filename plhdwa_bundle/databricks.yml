@@ -25,7 +25,7 @@ variables:
   svc_hash:
     description: >-
       Hash (application ID) do service principal da área, que executa os jobs (run_as) e cria os recursos. Sem
-      padrão: o deploy para se não for preenchido (no target ou no CI/CD com --var svc_hash=... ou BUNDLE_VAR_svc_hash).
+      padrão e não definido nos targets: vem do CI/CD (--var svc_hash=... ou BUNDLE_VAR_svc_hash); sem ele o deploy para.
 
   # ------------------------------------------------------------------ onde ficam as coisas
   catalogo:
@@ -33,11 +33,6 @@ variables:
   schema:
     description: Schema das tabelas operacionais (criado pelo pós-deploy se não existir)
     default: plhdwa
-  catalogos_objetos:
-    description: >-
-      Catálogos onde ficam as TABELAS DESTINO dos objetos (procuradas pela tag plhdwa_cod_objeto),
-      separados por vírgula. Vazio = o mesmo catálogo das tabelas operacionais.
-    default: ""
   landing_tipo:
     description: >-
       Onde o Netezza grava os arquivos. S3 (padrão) = direto no bucket: landing = s3://<bucket>/<prefixo>, acessado
@@ -176,9 +171,8 @@ variables:
     description: >-
       "true" (padrão) = antes da carga, cada DAT passa pela limpeza do cliente (regex de escape e \null), é gravado
       limpo em pasta_tmp/<arquivo>/ e lido com header, delimitador, multiLine e aspas simples; o arquivo limpo é
-      apagado no fim. "false" = lê o DAT direto. Cada tabela pode sobrepor com a TBLPROPERTY plhdwa.arquivo.limpeza.
-      O modo vem de plhdwa.arquivo.limpeza_modo: AUTO (padrão; detecta por arquivo se há registro em mais de uma
-      linha: se não há, limpa e lê em partes paralelas; se há, usa o código do cliente), PARALELA, DIRETA ou MULTILINHA.
+      apagado no fim. "false" = lê o DAT direto. Cada objeto pode sobrepor com a coluna limpeza da ctl_parametros.
+      O modo vem da coluna limpeza_modo da ctl_parametros: CLIENTE (padrão), AUTO, PARALELA, DIRETA ou MULTILINHA.
     default: "true"
   limpeza_pedaco_mb:
     description: >-
@@ -214,7 +208,7 @@ variables:
 
 targets:
   # Modelos: troque o host e os valores <...>. Rode sempre com -t <target>.
-  # svc_hash pode vir do CI/CD (--var svc_hash=<application id> ou BUNDLE_VAR_svc_hash) em vez de ficar aqui.
+  # svc_hash não é definido nos targets: vem do CI/CD (--var svc_hash=<application id> ou BUNDLE_VAR_svc_hash).
   # Antes do 1º deploy, crie o secret scope com o usuário/senha do Db2 (ver README, passo 2).
   dev:
     workspace:
@@ -222,7 +216,6 @@ targets:
     run_as:
       service_principal_name: ${var.svc_hash}
     variables:
-      svc_hash: <application_id_sp_dev>
       catalogo: <catalogo_dev>
       landing: s3://<bucket_dev>/<prefixo>
       warehouse_id: <warehouse_id_dev>
@@ -239,7 +232,6 @@ targets:
     run_as:
       service_principal_name: ${var.svc_hash}
     variables:
-      svc_hash: <application_id_sp_hml>
       catalogo: <catalogo_hml>
       landing: s3://<bucket_hml>/<prefixo>
       warehouse_id: <warehouse_id_hml>
@@ -256,7 +248,6 @@ targets:
     run_as:
       service_principal_name: ${var.svc_hash}
     variables:
-      svc_hash: <application_id_sp_prd>
       catalogo: <catalogo_prd>
       landing: s3://<bucket_prd>/<prefixo>
       warehouse_id: <warehouse_id_prd>

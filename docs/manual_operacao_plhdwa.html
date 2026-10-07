@@ -83,7 +83,7 @@
 <!-- 1 -->
 <section id="visao">
   <h2><span class="n">1</span>Visão geral em 1 minuto</h2>
-  <p class="lead">O CTL que chega dispara o <b>despachante</b>. Cada execução dele é um <b>lote</b>. Para cada objeto com arquivo pendente, o despachante olha o <b>modo de execução do objeto</b>, definido por tag na tabela destino: <span class="pill pD">DESPACHANTE</span> roda numa thread dentro do próprio despachante, <b>1 arquivo por vaga</b>; <span class="pill pJ">JOB</span> dispara um job independente (Standard ou Performance Optimized) que segue com os arquivos do mesmo objeto. <b>Vaga que libera é preenchida na hora</b>, com prioridade para o objeto com mais trabalho pendente. Em qualquer modo, <b>cada arquivo sensibiliza a controle no Db2 sozinho</b>: início, erro e conclusão.</p>
+  <p class="lead">O CTL que chega dispara o <b>despachante</b>. Cada execução dele é um <b>lote</b>. Para cada objeto com arquivo pendente, o despachante olha o <b>modo de execução do objeto</b>, definido na tabela <code>ctl_parametros</code>: <span class="pill pD">DESPACHANTE</span> roda numa thread dentro do próprio despachante, <b>1 arquivo por vaga</b>; <span class="pill pJ">JOB</span> dispara um job independente (Standard ou Performance Optimized) que segue com os arquivos do mesmo objeto. <b>Vaga que libera é preenchida na hora</b>, com prioridade para o objeto com mais trabalho pendente. Em qualquer modo, <b>cada arquivo sensibiliza a controle no Db2 sozinho</b>: início, erro e conclusão.</p>
   <div class="diagram"><svg viewBox="0 0 1180 300" role="img" aria-label="Componentes do motor">
     <defs><marker id="seta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--navy)"/></marker></defs>
     <rect x="10" y="40" width="200" height="110" rx="10" class="box"/><text x="24" y="66" class="t">Netezza (AWS)</text>
@@ -92,13 +92,13 @@
     <text x="264" y="86" class="s">dados · ctl · erro</text><text x="264" y="102" class="s">CTL parado aqui =</text><text x="264" y="118" class="s">arquivo aguardando</text>
     <rect x="500" y="20" width="330" height="150" rx="10" class="box a"/><text x="516" y="46" class="t">Despachante = 1 lote por execução</text>
     <text x="516" y="66" class="s">⚡ gatilho: chegada de CTL · 1 execução por vez</text><text x="516" y="84" class="s">vaga livre = próximo arquivo na hora; o modo vem</text>
-    <text x="516" y="100" class="s">da tag do objeto; respeita as vagas de cada modo</text><text x="516" y="122" class="s" style="fill:var(--D)">● DESPACHANTE: 1 thread por arquivo (24 vagas)</text>
+    <text x="516" y="100" class="s">da ctl_parametros; respeita as vagas de cada modo</text><text x="516" y="122" class="s" style="fill:var(--D)">● DESPACHANTE: 1 thread por arquivo (24 vagas)</text>
     <text x="516" y="140" class="s" style="fill:var(--J)">● JOB: 1 job por objeto, segue com ele (24 vagas)</text><text x="516" y="158" class="s">registra o lote: INICIADO … FINALIZADO</text>
     <rect x="870" y="20" width="300" height="70" rx="10" class="box"/><text x="886" y="46" class="t">Jobs independentes</text>
     <text x="886" y="64" class="s">carga_arquivo · performance / standard</text><text x="886" y="80" class="s">arranca 1× e segue com o objeto · mesmo lote</text>
     <rect x="870" y="110" width="300" height="60" rx="10" class="box"/><text x="886" y="136" class="t">Vigia (a cada 15 min)</text>
     <text x="886" y="154" class="s">religa o despachante se houver CTL parado</text>
-    <rect x="250" y="210" width="210" height="70" rx="10" class="box"/><text x="264" y="236" class="t">Tabelas destino (Delta)</text><text x="264" y="254" class="s">metadados e modo = tags + propriedades</text>
+    <rect x="250" y="210" width="210" height="70" rx="10" class="box"/><text x="264" y="236" class="t">Tabelas destino (Delta)</text><text x="264" y="254" class="s">layout; parâmetros na ctl_parametros</text>
     <rect x="500" y="210" width="330" height="70" rx="10" class="box"/><text x="516" y="236" class="t">Log, lotes e limites (plhdwanew)</text><text x="516" y="254" class="s">log_carga_evento · log_lote · ctl_execucao → dashboards</text>
     <rect x="870" y="210" width="300" height="70" rx="10" class="box v"/><text x="886" y="236" class="t">Controle (Db2 do cliente · ibm_db)</text><text x="886" y="254" class="s">por arquivo, no fim: CONCLUIDO · ERRO</text>
     <path d="M210 95 H250" class="edge"/><path d="M460 95 H500" class="edge a"/><text x="464" y="88" class="lbl">CTL</text>
@@ -119,7 +119,7 @@
     <rect x="0" y="235" width="1180" height="70" class="lane"/><text x="10" y="265" class="rotulo">Delta</text>
     <rect x="0" y="310" width="1180" height="70" class="lane"/><text x="10" y="340" class="rotulo">Controle (Db2)</text>
     <rect x="110" y="25" width="160" height="40" rx="7" class="box"/><text x="122" y="44" class="t" style="font-size:12px">DAT + CTL</text><text x="122" y="58" class="s">chegam (CTL por último)</text>
-    <rect x="285" y="100" width="135" height="40" rx="7" class="box a"/><text x="297" y="118" class="t" style="font-size:12px">ciclo · modo do objeto</text><text x="297" y="132" class="s">tag plhdwa_execucao</text>
+    <rect x="285" y="100" width="135" height="40" rx="7" class="box a"/><text x="297" y="118" class="t" style="font-size:12px">ciclo · modo do objeto</text><text x="297" y="132" class="s">ctl_parametros.execucao</text>
     <rect x="435" y="100" width="110" height="40" rx="7" class="box v"/><text x="447" y="118" class="t" style="font-size:12px">ROTEADO</text><text x="447" y="132" class="s">DESPACHANTE / JOB</text>
     <rect x="560" y="175" width="150" height="40" rx="7" class="box"/><text x="572" y="193" class="t" style="font-size:12px">validações</text><text x="572" y="207" class="s">CTL · DAT não vazio · tabela</text>
     <rect x="560" y="325" width="150" height="40" rx="7" class="box v"/><text x="572" y="343" class="t" style="font-size:12px">INICIADO</text><text x="572" y="357" class="s">log · início</text>
@@ -143,7 +143,7 @@
 <!-- 3 -->
 <section id="modo">
   <h2><span class="n">3</span>Modo de execução: despachante ou job independente</h2>
-  <p class="lead">Não existe fila por tamanho. Quem decide onde o arquivo roda é o <b>objeto</b>, por duas tags na tabela destino. As vagas de cada modo ficam em <code>ctl_execucao</code>.</p>
+  <p class="lead">Não existe fila por tamanho. Quem decide onde o arquivo roda é o <b>objeto</b>, por duas colunas da <code>ctl_parametros</code>. As vagas de cada modo ficam em <code>ctl_execucao</code>.</p>
   <div class="grid g2">
     <div class="card"><h4><span class="pill pD">DESPACHANTE</span> (padrão)</h4><p>O arquivo roda numa <b>thread</b> dentro do despachante, que já está ligado: sem arranque. Cada thread faz <b>1 arquivo</b> e devolve a vaga; o próximo arquivo do mesmo objeto (ou de outro) entra na hora. Indicado para a grande maioria dos objetos.</p></div>
     <div class="card"><h4><span class="pill pJ">JOB</span> (job independente)</h4><p>O objeto ganha <b>uma execução de job</b>, com compute isolado e visível no Jobs, que <b>segue com os próximos arquivos do mesmo objeto</b> (até 20 arquivos ou 60 min). O arranque (~1,9 min em Performance Optimized; ~7 min em Standard) é pago uma vez por objeto. Indicado para objetos muito grandes.</p></div>
@@ -152,11 +152,11 @@
     <rect x="10" y="100" width="150" height="60" rx="8" class="box a"/><text x="22" y="126" class="t">CTL pendente</text><text x="22" y="144" class="s">em ctl/</text>
     <rect x="200" y="100" width="160" height="60" rx="8" class="box"/><text x="212" y="124" class="t" style="font-size:12px">Objeto travado?</text><text x="212" y="142" class="s">v_objeto_travado</text>
     <rect x="400" y="100" width="190" height="60" rx="8" class="box"/><text x="412" y="124" class="t" style="font-size:12px">Objeto já tem arquivo</text><text x="412" y="140" class="t" style="font-size:12px">rodando?</text>
-    <rect x="630" y="100" width="190" height="60" rx="8" class="box"/><text x="642" y="124" class="t" style="font-size:12px">Tag plhdwa_execucao</text><text x="642" y="142" class="s">do objeto</text>
+    <rect x="630" y="100" width="190" height="60" rx="8" class="box"/><text x="642" y="124" class="t" style="font-size:12px">execucao (ctl_parametros)</text><text x="642" y="142" class="s">do objeto</text>
     <rect x="870" y="30" width="160" height="60" rx="8" class="box"/><text x="882" y="54" class="t" style="font-size:12px">Vaga no DESPACHANTE?</text><text x="882" y="72" class="s">&lt; max_simult (24)</text>
     <rect x="870" y="170" width="160" height="60" rx="8" class="box"/><text x="882" y="194" class="t" style="font-size:12px">Vaga no JOB?</text><text x="882" y="212" class="s">&lt; max_simult (24)</text>
     <rect x="1055" y="30" width="115" height="60" rx="8" class="box v"/><text x="1065" y="56" class="t" style="font-size:12px">thread</text><text x="1065" y="74" class="s">1 arquivo</text>
-    <rect x="1055" y="170" width="115" height="60" rx="8" class="box v"/><text x="1065" y="194" class="t" style="font-size:12px">run_now</text><text x="1065" y="212" class="s">job do tipo da tag</text>
+    <rect x="1055" y="170" width="115" height="60" rx="8" class="box v"/><text x="1065" y="194" class="t" style="font-size:12px">run_now</text><text x="1065" y="212" class="s">job do tipo_job</text>
     <rect x="200" y="10" width="160" height="50" rx="8" class="box"/><text x="212" y="32" class="t" style="font-size:12px">Ignora</text><text x="212" y="48" class="s">até o DESBLOQUEIO</text>
     <rect x="400" y="10" width="190" height="50" rx="8" class="box"/><text x="412" y="32" class="t" style="font-size:12px">Espera o atual terminar</text><text x="412" y="48" class="s">(ordem por geração)</text>
     <path d="M160 130 H200" class="edge"/><path d="M280 100 V60" class="edge"/><text x="286" y="84" class="nao">sim</text>
@@ -168,17 +168,17 @@
     <path d="M1030 60 H1055" class="edge"/><path d="M1030 200 H1055" class="edge"/>
     <text x="880" y="130" class="nao">sem vaga: entra na 1ª vaga que liberar</text>
   </svg></div>
-  <h3>As duas tags (por objeto) e os limites (por modo)</h3>
+  <h3>As duas colunas (por objeto) e os limites (por modo)</h3>
   <table>
     <tr><th>Onde</th><th>Parâmetro</th><th>Valores</th><th>Efeito</th></tr>
-    <tr><td>Tabela destino (tag)</td><td><code>plhdwa_execucao</code></td><td><code>DESPACHANTE</code> (padrão) · <code>JOB</code></td><td>Onde os arquivos do objeto rodam</td></tr>
-    <tr><td>Tabela destino (tag)</td><td><code>plhdwa_tipo_job</code></td><td><code>PERFORMANCE_OPTIMIZED</code> (padrão) · <code>STANDARD</code></td><td>Qual job independente é usado (só no modo JOB)</td></tr>
+    <tr><td><code>ctl_parametros</code></td><td><code>execucao</code></td><td><code>DESPACHANTE</code> (padrão) · <code>JOB</code></td><td>Onde os arquivos do objeto rodam</td></tr>
+    <tr><td><code>ctl_parametros</code></td><td><code>tipo_job</code></td><td><code>PERFORMANCE_OPTIMIZED</code> (padrão) · <code>STANDARD</code></td><td>Qual job independente é usado (só no modo JOB)</td></tr>
     <tr><td><code>ctl_execucao</code></td><td><code>max_simult</code> (linha DESPACHANTE)</td><td>24</td><td>Objetos (= arquivos) ao mesmo tempo no despachante</td></tr>
     <tr><td><code>ctl_execucao</code></td><td><code>max_simult</code> (linha JOB)</td><td>24</td><td>Jobs independentes ao mesmo tempo</td></tr>
     <tr><td><code>ctl_execucao</code></td><td><code>job_id_perf</code> · <code>job_id_std</code></td><td>gravados pelo pós-deploy</td><td>Os dois jobs independentes</td></tr>
     <tr><td>Bundle</td><td><code>job_max_arquivos</code> · <code>job_max_minutos</code></td><td>20 · 60</td><td>Quanto o job segue com o mesmo objeto antes de devolver a vaga</td></tr>
   </table>
-  <div class="callout">Prioridade: entre os objetos que podem andar, vai primeiro o que tem <b>mais arquivos e bytes pendentes</b>, para o fim do lote não ficar com um objeto sozinho. Mudanças nas tags valem a partir do próximo ciclo (cache de até ~1 min); mudanças em <code>ctl_execucao</code> valem no próximo ciclo (~5–10 s). Nada do que já está rodando muda.</div>
+  <div class="callout">Prioridade: entre os objetos que podem andar, vai primeiro o que tem <b>mais arquivos e bytes pendentes</b>, para o fim do lote não ficar com um objeto sozinho. Mudanças na <code>ctl_parametros</code> valem a partir do próximo ciclo (cache de até ~1 min); mudanças em <code>ctl_execucao</code> valem no próximo ciclo (~5–10 s). Nada do que já está rodando muda.</div>
 </section>
 
 <!-- 4 -->
@@ -289,7 +289,7 @@
 <!-- 8 -->
 <section id="operacao">
   <h2><span class="n">8</span>Manual de operação</h2>
-  <p class="lead">Nos SQLs, <code>plh</code> = <code>&lt;catalogo&gt;.&lt;schema&gt;</code>. Só o owner altera <code>ctl_execucao</code> e as tags dos objetos.</p>
+  <p class="lead">Nos SQLs, <code>plh</code> = <code>&lt;catalogo&gt;.&lt;schema&gt;</code>. Só o owner altera <code>ctl_execucao</code> e a <code>ctl_parametros</code>.</p>
 
   <h3>8.1 Rotina da janela 00h–09h (dashboard PLHDWA · Execução)</h3>
   <table>
@@ -319,9 +319,9 @@ UPDATE plh.ctl_execucao SET max_simult = 24, alterado_por = current_user(), alte
 UPDATE plh.ctl_execucao SET max_simult = 12, alterado_por = current_user(), alterado_em = current_timestamp() WHERE modo = 'JOB';
 
 <span class="c">-- mover um objeto para job independente (e escolher o tipo)</span>
-ALTER TABLE plh.fat_cartao_transacao SET TAGS ('plhdwa_execucao' = 'JOB', 'plhdwa_tipo_job' = 'PERFORMANCE_OPTIMIZED');
+UPDATE plh.ctl_parametros SET execucao = 'JOB', tipo_job = 'PERFORMANCE_OPTIMIZED', alterado_por = current_user(), alterado_em = current_timestamp() WHERE cod_objeto = 2005;
 <span class="c">-- voltar para o despachante</span>
-ALTER TABLE plh.fat_cartao_transacao SET TAGS ('plhdwa_execucao' = 'DESPACHANTE');</pre>
+UPDATE plh.ctl_parametros SET execucao = 'DESPACHANTE', alterado_por = current_user(), alterado_em = current_timestamp() WHERE cod_objeto = 2005;</pre>
   <table>
     <tr><th>Sinal</th><th>Ação</th></tr>
     <tr><td>Muitos arquivos aguardando e as 24 vagas ocupadas</td><td>Aumentar <code>max_simult</code> do DESPACHANTE (respeitando o limite de conexões do Db2)</td></tr>
@@ -335,7 +335,7 @@ ALTER TABLE plh.fat_cartao_transacao SET TAGS ('plhdwa_execucao' = 'DESPACHANTE'
     <tr><th>Erro</th><th>Controle</th><th>Arquivos</th><th>O que fazer</th></tr>
     <tr><td><code>ERRO_CTL</code> · <code>ERRO_PAR</code></td><td>ERRO</td><td><code>erro/</code></td><td>Pedir ao Netezza novo par com <b>nova data de geração</b>; desbloquear</td></tr>
     <tr><td><code>ERRO_DAT_VAZIO</code></td><td>ERRO</td><td><code>erro/</code></td><td>DAT com 0 bytes ou só header: pedir reenvio; desbloquear</td></tr>
-    <tr><td><code>ERRO_CADASTRO</code></td><td>ERRO</td><td><code>erro/</code></td><td>Cadastrar o objeto (seção 9) ou corrigir a tag; devolver o par para <code>ctl/</code> e <code>dados/</code>; desbloquear</td></tr>
+    <tr><td><code>ERRO_CADASTRO</code></td><td>ERRO</td><td><code>erro/</code></td><td>A mensagem diz a causa (sem linha ou com várias na <code>ctl_parametros</code>, tabela ou coluna inexistente): corrigir a linha (seção 9); devolver o par para <code>ctl/</code> e <code>dados/</code>; desbloquear</td></tr>
     <tr><td><code>ERRO_SCHEMA</code></td><td>ERRO</td><td><code>erro/</code></td><td>Decisão humana: ajustar a tabela (9.6) ou pedir correção; devolver para <code>ctl/</code> e <code>dados/</code>; desbloquear</td></tr>
     <tr><td><code>ERRO_DADOS</code></td><td>ERRO</td><td><code>erro/</code></td><td>A mensagem traz o motivo e a 1ª linha inválida; corrigir na origem e reenviar; desbloquear</td></tr>
     <tr><td><code>ERRO_SEQUENCIA</code></td><td>ERRO</td><td><code>erro/</code></td><td>Chegou arquivo mais antigo que o último carregado; confirmar com o Netezza</td></tr>
@@ -380,13 +380,13 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
 <!-- 9 -->
 <section id="cadastro">
   <h2><span class="n">9</span>Cadastro de novos arquivos (objetos)</h2>
-  <p class="lead">Cadastrar = criar a tabela Delta destino com as <b>tags</b> e <b>propriedades</b> certas. Não existe tabela de cadastro: o motor encontra a tabela pela tag <code>plhdwa_cod_objeto</code>, lê dela o layout e as regras e, das tags, o modo de execução. Objeto novo não exige deploy.</p>
+  <p class="lead">Cadastrar = criar a tabela Delta destino (layout) e gravar a <b>linha do objeto na <code>ctl_parametros</code></b>: destino, tipo de carga, colunas do REPLACE WHERE, modo de execução, formato do arquivo e limpeza. O motor não usa tags nem propriedades da tabela (só a tag <code>OWNER</code>, de governança). Objeto novo não exige deploy.</p>
 
   <h3>9.1 Passo a passo</h3>
   <ol class="passos">
     <li><h4>Obter a DDL da tabela externa do Netezza</h4><p>Salvar em <code>implantacao/netezza/</code>.</p></li>
     <li><h4>Definir as regras</h4><p>Código do objeto, tabela destino, FATO ou DIM, colunas de data de movimento e de instituição (FATO), <b>modo de execução</b> (DESPACHANTE ou JOB) e tipo do job (se JOB).</p></li>
-    <li><h4>Gerar e criar a tabela</h4><p>Conversor (9.2), ou uma linha na planilha do cadastro em lote (9.5).</p></li>
+    <li><h4>Gerar e criar a tabela e a linha na ctl_parametros</h4><p>Conversor (9.2: gera o <code>CREATE TABLE</code> e o <code>MERGE</code> na <code>ctl_parametros</code>), ou uma linha na planilha do cadastro em lote (9.5).</p></li>
     <li><h4>Validar a leitura</h4><p><code>sql/90_validar_leitura_amostra.sql</code> com um arquivo real: contagem sem erro.</p></li>
     <li><h4>Teste ponta a ponta</h4><p>Enviar um par real e conferir: log CONCLUIDO, controle CONCLUIDO com a quantidade, linhas na tabela.</p></li>
   </ol>
@@ -395,35 +395,39 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
 <pre><span class="c"># FATO no despachante (padrão)</span>
 python3 implantacao/ferramentas/converter_ddl_netezza.py implantacao/netezza/ddl_external_dwa_ccr_fatparcela.sql \
   --catalogo &lt;catalogo&gt; --schema plhdwanew --tabela fat_parcela \
+  --catalogo-controle &lt;catalogo&gt; --schema-controle plhdwanew \
   --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
   &gt; implantacao/sql/objetos/1230_fat_parcela.sql
 
 <span class="c"># FATO grande em job independente Performance Optimized</span>
 python3 implantacao/ferramentas/converter_ddl_netezza.py implantacao/netezza/exemplos/ddl_external_fat_extrato_conta.sql \
   --catalogo &lt;catalogo&gt; --schema plhdwanew --tabela fat_extrato_conta \
+  --catalogo-controle &lt;catalogo&gt; --schema-controle plhdwanew \
   --cod-objeto 2012 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
   --execucao JOB --tipo-job PERFORMANCE_OPTIMIZED &gt; implantacao/sql/objetos/2012_fat_extrato_conta.sql
 
 <span class="c"># criar</span>
 python3 implantacao/ferramentas/executar_sql.py implantacao/sql/objetos/1230_fat_parcela.sql --warehouse &lt;id&gt;</pre>
 
-  <h3>9.3 O que fica na tabela</h3>
+  <h3>9.3 O que fica na ctl_parametros (uma linha por objeto)</h3>
   <table>
     <tr><th>Item</th><th>Onde</th><th>Exemplo</th></tr>
-    <tr><td>Código do objeto</td><td>tag <code>plhdwa_cod_objeto</code></td><td><code>1230</code></td></tr>
-    <tr><td>Modo de execução</td><td>tag <code>plhdwa_execucao</code></td><td><code>DESPACHANTE</code> ou <code>JOB</code></td></tr>
-    <tr><td>Tipo do job independente</td><td>tag <code>plhdwa_tipo_job</code></td><td><code>PERFORMANCE_OPTIMIZED</code> ou <code>STANDARD</code></td></tr>
-    <tr><td>Custo / governança</td><td>tag <code>OWNER</code></td><td><code>PLHDWA</code></td></tr>
-    <tr><td>Layout</td><td>schema da tabela, na ordem do header</td><td>122 colunas</td></tr>
-    <tr><td>Tipo de carga, data, instituição</td><td><code>plhdwa.tipo_carga</code>, <code>plhdwa.col_data_mov</code>, <code>plhdwa.col_instituicao</code></td><td><code>FATO</code>, <code>SK_TMO_MVM</code>, <code>SK_INS</code></td></tr>
-    <tr><td>Formato do arquivo</td><td><code>plhdwa.arquivo.*</code></td><td>delimitador, header, encoding, escape, NULL, timestamp</td></tr>
+    <tr><td>Código do objeto</td><td><code>cod_objeto</code> (1 linha por código)</td><td><code>1230</code></td></tr>
+    <tr><td>Tabela destino</td><td><code>catalogo_destino</code>, <code>schema_destino</code>, <code>tabela_destino</code></td><td><code>plh</code> · <code>fat_parcela</code></td></tr>
+    <tr><td>Tipo de carga, data, instituição</td><td><code>tipo_carga</code>, <code>col_data_mov</code>, <code>col_instituicao</code></td><td><code>FATO</code>, <code>SK_TMO_MVM</code>, <code>SK_INS</code></td></tr>
+    <tr><td>Modo de execução</td><td><code>execucao</code>, <code>tipo_job</code></td><td><code>DESPACHANTE</code> ou <code>JOB</code> · <code>PERFORMANCE_OPTIMIZED</code> ou <code>STANDARD</code></td></tr>
+    <tr><td>Ligado / pausado</td><td><code>ativo</code></td><td><code>true</code> (false = arquivos ficam parados em <code>ctl/</code>, sem erro)</td></tr>
+    <tr><td>Formato do arquivo</td><td><code>delimitador</code>, <code>encoding</code>, <code>header</code>, <code>escape</code>, <code>quote</code>, <code>null_value</code>, <code>date_format</code>, <code>timestamp_format</code></td><td>vazio = padrão do motor</td></tr>
+    <tr><td>Limpeza do DAT</td><td><code>limpeza</code>, <code>limpeza_modo</code>, <code>limpeza_quote</code></td><td>vazio = variável <code>limpeza_dat</code>, <code>CLIENTE</code>, <code>'</code></td></tr>
+    <tr><td>Layout (na tabela destino)</td><td>schema da tabela, na ordem do header</td><td>122 colunas</td></tr>
+    <tr><td>Custo / governança (na tabela destino)</td><td>tag <code>OWNER</code></td><td><code>PLHDWA</code></td></tr>
   </table>
 
   <h3>9.4 Ajustes opcionais</h3>
 <pre><span class="c">-- Netezza passou a exportar com ESCAPECHAR '\'</span>
-ALTER TABLE plh.fat_parcela SET TBLPROPERTIES ('plhdwa.arquivo.escape' = '\\');
+UPDATE plh.ctl_parametros SET escape = '\\', alterado_por = current_user(), alterado_em = current_timestamp() WHERE cod_objeto = 1230;
 <span class="c">-- encoding ou NULL diferentes do padrão</span>
-ALTER TABLE plh.fat_parcela SET TBLPROPERTIES ('plhdwa.arquivo.encoding' = 'UTF-8', 'plhdwa.arquivo.null_value' = 'NULL');</pre>
+UPDATE plh.ctl_parametros SET encoding = 'UTF-8', null_value = 'NULL', alterado_por = current_user(), alterado_em = current_timestamp() WHERE cod_objeto = 1230;</pre>
 
   <h3>9.5 Cadastro em lote</h3>
 <pre><span class="c"># objetos.csv: cod;ddl;tabela;tipo;col_data;col_inst;execucao;tipo_job</span>
@@ -431,14 +435,14 @@ ALTER TABLE plh.fat_parcela SET TBLPROPERTIES ('plhdwa.arquivo.encoding' = 'UTF-
 <span class="c"># 2018;ddl_external_fat_risco_basileia.sql;fat_risco_basileia;FATO;SK_TMO_MVM;SK_INS;JOB;STANDARD</span>
 <span class="c"># 2007;ddl_external_dim_cliente.sql;dim_cliente;DIM;;;DESPACHANTE;PERFORMANCE_OPTIMIZED</span>
 implantacao/ferramentas/cadastrar_em_lote.sh objetos.csv implantacao/netezza/exemplos \
-  &lt;catalogo&gt; plhdwanew &lt;warehouse_id&gt;</pre>
+  &lt;catalogo&gt; plhdwanew &lt;catalogo&gt; plhdwanew &lt;warehouse_id&gt;</pre>
   <div class="callout ok">Exemplo pronto: os 25 objetos do lote grande (2001–2025) foram cadastrados assim, a partir de <code>implantacao/netezza/exemplos/objetos_exemplo.csv</code>.</div>
 
   <h3>9.6 Alterar, desativar, mudar o layout</h3>
   <table>
     <tr><th>Quero</th><th>Faça</th></tr>
-    <tr><td>Mudar o modo de execução</td><td><code>ALTER TABLE … SET TAGS ('plhdwa_execucao' = 'JOB')</code> (vale no próximo ciclo)</td></tr>
-    <tr><td>Desativar temporariamente</td><td><code>ALTER TABLE … UNSET TAGS ('plhdwa_cod_objeto')</code>: os próximos arquivos dão ERRO_CADASTRO</td></tr>
+    <tr><td>Mudar o modo de execução</td><td><code>UPDATE plh.ctl_parametros SET execucao = 'JOB' WHERE cod_objeto = …</code> (vale no próximo ciclo)</td></tr>
+    <tr><td>Desativar temporariamente</td><td><code>UPDATE plh.ctl_parametros SET ativo = false WHERE cod_objeto = …</code>: os arquivos ficam parados em <code>ctl/</code>, sem erro; com <code>ativo = true</code> voltam a ser carregados</td></tr>
     <tr><td>Coluna nova no arquivo</td><td>O objeto trava com ERRO_SCHEMA (por decisão). <code>ALTER TABLE … ADD COLUMN c TIPO AFTER col</code>, devolver o par para <code>ctl/</code> e <code>dados/</code> e desbloquear</td></tr>
   </table>
 </section>
@@ -450,7 +454,7 @@ implantacao/ferramentas/cadastrar_em_lote.sh objetos.csv implantacao/netezza/exe
   <details><summary>Onde vejo os jobs em execução?</summary><p>Dashboard <b>PLHDWA · Execução</b>, página <b>Em execução</b>: cards “Objetos em execução”, “Jobs independentes em execução”, “Arquivos rodando no despachante” e “Despachante: lotes em andamento”, mais as tabelas “Objetos em execução” (1 linha por objeto), “Jobs independentes em execução” (1 linha por job, inclusive na fila do Jobs ou trocando de arquivo; coluna “Execução do job” = run_id no Jobs), “Arquivos em execução” e “Lotes”.</p></details>
   <details><summary>Um arquivo do despachante dá erro: os outros do mesmo lote param?</summary><p>Não. Só o objeto do arquivo trava; os demais objetos continuam no mesmo lote. No fim, o lote fica CONCLUIDO_COM_ERROS e a execução termina FAILED (para notificar).</p></details>
   <details><summary>Ficou uma pasta com nome de arquivo dentro de <code>tmp/</code>. O que faço?</summary><p>É o arquivo limpo (etapa de limpeza do DAT, variável <code>limpeza_dat</code>) de uma execução que caiu no meio. Não precisa fazer nada: o próximo lote do despachante apaga as pastas de arquivos que não estão em andamento. Os outros arquivos do cliente em <code>tmp/</code> nunca são tocados. Para ver quanto tempo a limpeza levou em cada arquivo, veja a mensagem do evento CARREGADO (“limpeza do DAT em N s”).</p></details>
-  <details><summary>Um objeto grande ficou lento depois da limpeza do DAT</summary><p>Confira o modo na mensagem do evento CARREGADO (“limpeza do DAT em N s (modo …)”). O padrão <b>CLIENTE</b> limpa e lê em partes paralelas. Se aparecer <b>MULTILINHA</b>, a tabela está com <code>plhdwa.arquivo.limpeza_modo = MULTILINHA</code> (1 arquivo, uma tarefa só): tire a propriedade ou troque para <code>CLIENTE</code>.</p></details>
+  <details><summary>Um objeto grande ficou lento depois da limpeza do DAT</summary><p>Confira o modo na mensagem do evento CARREGADO (“limpeza do DAT em N s (modo …)”). O padrão <b>CLIENTE</b> limpa e lê em partes paralelas. Se aparecer <b>MULTILINHA</b>, o objeto está com <code>limpeza_modo = 'MULTILINHA'</code> na <code>ctl_parametros</code> (1 arquivo, uma tarefa só): troque para <code>NULL</code> ou <code>'CLIENTE'</code>.</p></details>
   <details><summary>A controle é atualizada por lote ou por arquivo?</summary><p>Por arquivo, sempre: cada um grava, no fim, CONCLUIDO ou ERRO na sua própria linha, rodando no despachante ou em job. O lote é só uma referência (<code>lote_id</code>).</p></details>
   <details><summary>A controle (Db2) caiu no meio da janela.</summary><p>Arquivos que iam começar travam com ERRO_DB2 sem carregar nada; os que estavam terminando ficam com os dados no Delta e ERRO_DB2. Quando a controle voltar: desbloquear e rodar o despachante.</p></details>
   <details><summary>Chegaram 300 arquivos: abre um despachante para cada um?</summary><p>Não. Existe no máximo 1 lote rodando; ele trata os 300 conforme as vagas de cada modo (seção 5).</p></details>

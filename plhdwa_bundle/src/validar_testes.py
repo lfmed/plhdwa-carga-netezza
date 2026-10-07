@@ -152,13 +152,14 @@ for r in manifesto:
     elif st and st.startswith("ERRO"):
         registrar(r["cenario"], f"{n} movido para a pasta de erro", existe(f"{d_erro}/{n}") and not existe(f"{d_ctl}/{n}"))
 
-# 10) Metadados preservados depois das cargas (tags e TBLPROPERTIES na tabela destino)
-for t, cod in [("teste_fato_9001", "9001"), ("teste_dim_9110", "9110"), ("fat_parcela", "1230")]:
+# 10) Cadastro preservado depois das cargas: a linha do objeto na ctl_parametros aponta para a tabela (que segue
+#     existindo) e o motor não depende de tags nem TBLPROPERTIES plhdwa.* na tabela destino
+for t, cod in [("teste_fato_9001", 9001), ("teste_dim_9110", 9110), ("fat_parcela", 1230)]:
     if spark.catalog.tableExists(fq(t)):
-        props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {fq(t)}").collect()}
-        tag = spark.sql(f"""SELECT tag_value FROM {P['catalogo']}.information_schema.table_tags
-                            WHERE schema_name = '{P['schema']}' AND table_name = '{t}' AND tag_name = 'plhdwa_cod_objeto'""").first()
-        registrar("metadados", f"{t} mantém propriedades e tag", props.get("plhdwa.cod_objeto") == cod and tag and tag.tag_value == cod)
+        linha = spark.sql(f"""SELECT count(*) AS n FROM {fq('ctl_parametros')} WHERE cod_objeto = {cod}
+                              AND catalogo_destino = '{P['catalogo']}' AND schema_destino = '{P['schema']}'
+                              AND tabela_destino = '{t}'""").first()
+        registrar("metadados", f"{t} com 1 linha na ctl_parametros", linha.n == 1)
 
 # COMMAND ----------
 

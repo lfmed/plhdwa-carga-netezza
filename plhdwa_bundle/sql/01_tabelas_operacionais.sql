@@ -10,22 +10,23 @@
 -- Pode rodar quantas vezes quiser: tudo é CREATE ... IF NOT EXISTS / CREATE OR REPLACE VIEW, e os limites
 -- iniciais só entram se ctl_execucao estiver vazia (depois disso, quem manda é o owner).
 --
--- Os metadados de cada OBJETO (layout, tipo de carga, formato do arquivo, modo de execução) NÃO ficam aqui:
--- ficam na própria tabela destino (tags plhdwa_* + TBLPROPERTIES plhdwa.*). Ver ferramentas/converter_ddl_netezza.py.
+-- Os parâmetros de cada OBJETO (destino, tipo de carga, colunas do REPLACE WHERE, modo de execução, formato do
+-- arquivo e limpeza) ficam na ctl_parametros (item 1b). Da tabela destino o motor só usa o layout (colunas e tipos).
+-- Ver ferramentas/converter_ddl_netezza.py, que gera a linha de cada objeto a partir da DDL do Netezza.
 -- =====================================================================================
 
 CREATE SCHEMA IF NOT EXISTS ${catalogo}.${schema};
 
 ALTER SCHEMA ${catalogo}.${schema} SET TAGS ('OWNER' = '${owner_tag}');
 
--- 1) Vagas por modo de execução. O modo de cada objeto é a tag plhdwa_execucao da tabela destino
+-- 1) Vagas por modo de execução. O modo de cada objeto é a coluna execucao da ctl_parametros
 --    (DESPACHANTE = thread dentro do despachante · JOB = job independente). Só o owner altera.
 --    O pós-deploy grava os job_id dos jobs independentes (Performance e Standard).
 CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.ctl_execucao (
   modo          STRING     COMMENT 'DESPACHANTE (threads dentro do despachante) | JOB (job independente)',
   max_simult    INT        COMMENT 'objetos (= arquivos, 1 por objeto) processando ao mesmo tempo neste modo',
-  job_id_perf   BIGINT     COMMENT 'modo JOB: job dos objetos com plhdwa_tipo_job = PERFORMANCE_OPTIMIZED',
-  job_id_std    BIGINT     COMMENT 'modo JOB: job dos objetos com plhdwa_tipo_job = STANDARD',
+  job_id_perf   BIGINT     COMMENT 'modo JOB: job dos objetos com tipo_job = PERFORMANCE_OPTIMIZED (ctl_parametros)',
+  job_id_std    BIGINT     COMMENT 'modo JOB: job dos objetos com tipo_job = STANDARD (ctl_parametros)',
   alterado_por  STRING,
   alterado_em   TIMESTAMP
 ) COMMENT 'PLHDWA · limites de execução por modo (relido pelo despachante a cada ciclo)';
@@ -37,6 +38,51 @@ SELECT * FROM VALUES
   ('DESPACHANTE', ${max_simult_despachante}, CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), current_user(), current_timestamp()),
   ('JOB',         ${max_simult_job},         CAST(NULL AS BIGINT), CAST(NULL AS BIGINT), current_user(), current_timestamp())
 WHERE NOT EXISTS (SELECT 1 FROM ${catalogo}.${schema}.ctl_execucao);
+
+-- 1b) Parâmetros de cada objeto (uma linha por código de objeto do CTL). Relida pelo motor a cada minuto: um
+--     UPDATE vale sem deploy. Coluna vazia (NULL) = padrão do motor. Os CHECK recusam valor inválido no próprio
+--     INSERT/UPDATE. O Delta não impede código duplicado: o motor confere e dá ERRO_CADASTRO.
+CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.ctl_parametros (
+  cod_objeto        INT     NOT NULL COMMENT 'código do objeto (1º campo do nome e do conteúdo do CTL)',
+  catalogo_destino  STRING  NOT NULL COMMENT 'catálogo da tabela destino',
+  schema_destino    STRING  NOT NULL COMMENT 'schema da tabela destino',
+  tabela_destino    STRING  NOT NULL COMMENT 'tabela destino (o layout, colunas e tipos, vem dela)',
+  tipo_carga        STRING  NOT NULL COMMENT 'FATO = REPLACE WHERE data de movimento (+ instituições) · DIM = substitui a tabela',
+  col_data_mov      STRING           COMMENT 'FATO: coluna da data de movimento (REPLACE WHERE)',
+  col_instituicao   STRING           COMMENT 'FATO: coluna da instituição (REPLACE WHERE, se o CTL trouxer lista)',
+  execucao          STRING  NOT NULL DEFAULT 'DESPACHANTE' COMMENT 'DESPACHANTE (thread no despachante) | JOB (job independente)',
+  tipo_job          STRING  NOT NULL DEFAULT 'PERFORMANCE_OPTIMIZED' COMMENT 'modo JOB: PERFORMANCE_OPTIMIZED | STANDARD',
+  ativo             BOOLEAN NOT NULL DEFAULT true COMMENT 'false = os arquivos do objeto ficam parados na pasta de CTL',
+  delimitador       STRING           COMMENT 'arquivo: separador de campos (NULL = |)',
+  encoding          STRING           COMMENT 'arquivo: encoding (NULL = ISO-8859-15)',
+  header            BOOLEAN          COMMENT 'arquivo: 1ª linha é o cabeçalho (NULL = true)',
+  escape            STRING           COMMENT 'arquivo: caractere de escape (NULL = sem)',
+  quote             STRING           COMMENT 'arquivo: aspas dos textos (NULL = sem)',
+  null_value        STRING           COMMENT 'arquivo: texto que vale NULL (NULL = vazio)',
+  date_format       STRING           COMMENT 'arquivo: formato das datas (NULL = yyyy-MM-dd)',
+  timestamp_format  STRING           COMMENT 'arquivo: formato dos timestamps (NULL = yyyy-MM-dd HH:mm[:ss])',
+  limpeza           BOOLEAN          COMMENT 'limpeza do DAT antes da carga (NULL = variável limpeza_dat)',
+  limpeza_modo      STRING           COMMENT 'CLIENTE | AUTO | PARALELA | DIRETA | MULTILINHA (NULL = CLIENTE)',
+  limpeza_quote     STRING           COMMENT 'aspas dos textos na leitura do arquivo limpo (NULL = aspa simples)',
+  tabela_origem     STRING           COMMENT 'tabela externa de origem no Netezza (informativo)',
+  observacao        STRING,
+  alterado_por      STRING,
+  alterado_em       TIMESTAMP
+) COMMENT 'PLHDWA · parâmetros de cada objeto: destino, carga, execução, formato do arquivo e limpeza'
+TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
+
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros SET TAGS ('OWNER' = '${owner_tag}');
+
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_carga;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_tipo_carga CHECK (tipo_carga IN ('FATO', 'DIM'));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_fato_colunas;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_fato_colunas CHECK (tipo_carga = 'DIM' OR (coalesce(col_data_mov, '') <> '' AND coalesce(col_instituicao, '') <> ''));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_execucao;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_execucao CHECK (execucao IN ('DESPACHANTE', 'JOB'));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_job;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_tipo_job CHECK (tipo_job IN ('PERFORMANCE_OPTIMIZED', 'STANDARD'));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_limpeza_modo;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_limpeza_modo CHECK (limpeza_modo IS NULL OR limpeza_modo IN ('CLIENTE', 'AUTO', 'PARALELA', 'DIRETA', 'MULTILINHA'));
 
 -- 2) Log de eventos por arquivo: só INSERT (vários workers gravando ao mesmo tempo, sem conflito).
 CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_carga_evento (

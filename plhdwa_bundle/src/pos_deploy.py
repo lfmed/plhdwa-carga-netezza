@@ -2,12 +2,13 @@
 # MAGIC %md
 # MAGIC # PLHDWA · Instalação e pós-deploy (rodar após cada `databricks bundle deploy`)
 # MAGIC Pode rodar quantas vezes quiser (tudo é idempotente):
-# MAGIC 1. Cria/atualiza as tabelas e visões operacionais a partir de `sql/01_tabelas_operacionais.sql`,
+# MAGIC 1. Cria/atualiza as tabelas e visões operacionais (inclusive a `ctl_parametros`, cadastro dos objetos) a partir de `sql/01_tabelas_operacionais.sql`,
 # MAGIC    trocando `${catalogo}`, `${schema}`, `${owner_tag}` e as vagas iniciais pelas variáveis do bundle.
 # MAGIC 2. Grava em `ctl_execucao` os jobs independentes de cada tipo (Performance Optimized e Standard).
 # MAGIC 3. Só com `db2_modo = SIMULADO` (testes sem Db2): cria o banco e a tabela da controle no Lakebase.
 # MAGIC    Com `db2_modo = DB2` não usa Lakebase; a conexão com o Db2 é testada pelo job "testar controle Db2".
-# MAGIC 4. Dá ao owner (`grupo_owner`) escrita em `ctl_execucao` e leitura nas tabelas operacionais.
+# MAGIC 4. Dá ao owner (`grupo_owner`) escrita em `ctl_execucao` e `ctl_parametros` e leitura nas tabelas operacionais.
+# MAGIC 5. Confere a `ctl_parametros` contra as tabelas destino (código duplicado, tabela ou coluna inexistente).
 
 # COMMAND ----------
 
@@ -124,4 +125,32 @@ if P["grupo_owner"] and P["grupo_owner"] != usuario:
     spark.sql(f"GRANT USE SCHEMA, SELECT ON SCHEMA {P['catalogo']}.{P['schema']} TO `{P['grupo_owner']}`")
     spark.sql(f"GRANT SELECT, MODIFY ON TABLE {fq('ctl_execucao')} TO `{P['grupo_owner']}`")
     spark.sql(f"GRANT SELECT, MODIFY ON TABLE {fq('log_carga_evento')} TO `{P['grupo_owner']}`")  # DESBLOQUEIO
+    spark.sql(f"GRANT SELECT, MODIFY ON TABLE {fq('ctl_parametros')} TO `{P['grupo_owner']}`")   # cadastro dos objetos
+
+# COMMAND ----------
+
+# 5) Conferência da ctl_parametros contra as tabelas destino (só mostra; o motor confere de novo em cada carga e
+#    dá ERRO_CADASTRO no objeto com problema). Na 1ª instalação ela ainda está vazia.
+problemas = []
+linhas = spark.table(fq("ctl_parametros")).collect()
+contagem = {}
+for r in linhas:
+    contagem[r.cod_objeto] = contagem.get(r.cod_objeto, 0) + 1
+for r in linhas:
+    destino = f"{r.catalogo_destino}.{r.schema_destino}.{r.tabela_destino}"
+    if contagem[r.cod_objeto] > 1:
+        problemas.append((r.cod_objeto, destino, f"código em {contagem[r.cod_objeto]} linhas"))
+        continue
+    try:
+        colunas = {c.lower() for c in spark.table(destino).columns}
+    except Exception:
+        problemas.append((r.cod_objeto, destino, "tabela destino não encontrada"))
+        continue
+    for nome in ("col_data_mov", "col_instituicao"):
+        v = getattr(r, nome) or ""
+        if r.tipo_carga == "FATO" and v.lower() not in colunas:
+            problemas.append((r.cod_objeto, destino, f"{nome} = {v!r} não é coluna da tabela"))
+print(f"ctl_parametros: {len(linhas)} objeto(s), {len(problemas)} problema(s)")
+if problemas:
+    display(spark.createDataFrame(problemas, "cod_objeto INT, tabela_destino STRING, problema STRING"))
 print("instalação / pós-deploy concluído")
