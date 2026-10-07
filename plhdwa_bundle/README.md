@@ -125,11 +125,15 @@ Ajustes **sem deploy**, feitos pelo owner:
 
 ## 5. Cadastrar objetos (tabela `ctl_parametros`)
 
-**Nome dos arquivos:** `<cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL` (e o `.dat` com o mesmo nome),
+**Nome dos arquivos:** `<cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL` (e o `.dat` com o mesmo nome; a
+extensão pode ser maiúscula ou minúscula: `.CTL`/`.ctl`, `.DAT`/`.dat`),
 por exemplo `57_FINANCEIRO_DIM_BEM_IMOVEL_20260930_20260930155333.CTL`. A carga olha **só o código** (1º campo). O grupo
 é o 1º segmento depois do código (sem `_`) e serve só para visualização: coluna `grupo` em `v_status_arquivo`,
 `v_arquivo_concluido`, `v_em_execucao`, `v_objeto_travado` e nos dashboards (com filtro). Nome no padrão antigo, sem
 grupo, continua valendo; nesse caso o 1º segmento do nome aparece como grupo (nome de um segmento só = grupo vazio).
+Arquivo na pasta de CTL com nome fora desse padrão (ou que não é CTL) vai para `pasta_erro` (com o `.dat` de mesmo
+nome, se houver) depois de `mover_invalido_min` minutos na pasta (padrão 5, para não mexer em arquivo sendo gravado) e
+gera o evento `NOME_INVALIDO` no log (não trava objeto).
 
 Os parâmetros de cada objeto ficam numa linha da **`<catalogo>.<schema>.ctl_parametros`** (criada pelo pós-deploy).
 O motor **não usa tags nem TBLPROPERTIES** (só a tag `OWNER`, de governança). Da tabela destino ele usa apenas o

@@ -26,8 +26,9 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 # Nome dos arquivos: <cod>_[<nomegrupo>_]<nome>_<data_mov yyyyMMdd>_<data_geracao yyyyMMddHHmmss>.<dat|CTL>
+# (extensão em maiúscula ou minúscula: .CTL/.ctl, .DAT/.dat)
 # (o grupo é o 1º segmento depois do código, só para visualização; a carga olha só o código)
-RX_NOME = re.compile(r"^(\d+)_(.+)_(\d{8})_(\d{14})\.(dat|CTL)$")
+RX_NOME = re.compile(r"^(\d+)_(.+)_(\d{8})_(\d{14})\.(dat|ctl)$", re.IGNORECASE)   # extensão em qualquer caixa
 MODOS = ("DESPACHANTE", "JOB")
 
 # Contexto da execução (preenchido por iniciar()). É lido por todas as threads, e só o cache muda.
@@ -106,6 +107,8 @@ PARAMETROS = {
     "max_minutos":        ("60",               "... ou até M minutos"),
     # --- vigia ---
     "despachante_job_id": ("0",              "job do despachante (o vigia dispara se houver CTL parado)"),
+    "mover_invalido_min": ("5",                "arquivo da pasta de CTL com nome fora do padrão há mais de N minutos vai para "
+                                               "pasta_erro (com o .dat de mesmo nome); a espera evita mexer em arquivo sendo gravado"),
     "vigia_parado_min":   ("5",                "CTL pendente há mais de N minutos sem despachante rodando = disparar"),
     # --- referências dinâmicas do Jobs ---
     "job_id":             ("0",                "{{job.id}}"),
@@ -116,7 +119,7 @@ PARAMETROS = {
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
 COMUNS = ["catalogo", "schema", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
           "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb",
-          "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
+          "mover_invalido_min", "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
           "db2_espera_base_s", "db2_registrar_inicio",
@@ -207,7 +210,7 @@ def _linha_evento(arq, status, c):
         "arquivo_ctl": arq.get("nome_ctl") if arq else None,
         "arquivo_dat": arq.get("nome_dat") if arq else None,
         "tamanho_bytes": c.get("tamanho"),
-        "data_referencia": int(arq["dt_mov"]) if arq else None,
+        "data_referencia": int(arq["dt_mov"]) if arq and arq.get("dt_mov") else None,
         "dg": arq.get("dt_ger") if arq else None,
         "instituicoes": c.get("instituicoes"),
         "status": status,
@@ -298,7 +301,7 @@ def fechar_lotes_orfaos():
 def ler_nome(nome_ctl):
     """Quebra o nome do CTL nas partes. Devolve None se o nome não seguir o padrão."""
     m = RX_NOME.match(nome_ctl)
-    if not m or m.group(5) != "CTL":
+    if not m or m.group(5).upper() != "CTL":
         return None
     base = nome_ctl[:-4]
     # <cod>_<nomegrupo>_<nome>_...: o grupo (1º segmento, sem '_') é só para visualização; a carga usa só o código
@@ -346,8 +349,28 @@ def _ls(caminho, obrigatoria=False, tentativas=3, info=None):
 
 
 def tamanhos_dat():
-    """Tamanho em bytes de cada DAT, direto da listagem (sem abrir o arquivo)."""
-    return {f.name: f.size for f in _ls(pasta(CTX["pasta_dat"]))}
+    """Tamanho em bytes de cada DAT, direto da listagem (sem abrir o arquivo). A chave é o nome com extensão
+    ".dat" minúscula (o nome_dat de ler_nome), qualquer que seja a caixa da extensão no arquivo."""
+    return {(f.name[:-4] + ".dat" if f.name.lower().endswith(".dat") else f.name): f.size
+            for f in _ls(pasta(CTX["pasta_dat"]))}
+
+
+def resolver_dat(arq):
+    """Acha o DAT do par com a extensão em qualquer caixa (.dat, .DAT, .Dat...) e acerta arq['dat'] e
+    arq['nome_dat'] para o nome real. Devolve o tamanho em bytes, ou None se não existir."""
+    for nome in (arq["base"] + ".dat", arq["base"] + ".DAT"):
+        try:
+            f = CTX["dbutils"].fs.ls(pasta(f"{CTX['pasta_dat']}/{nome}"))[0]
+            arq.update(dat=f.path, nome_dat=nome)
+            return f.size
+        except Exception:
+            pass
+    alvo = (arq["base"] + ".dat").lower()          # outra combinação de caixa: procura na pasta (só neste caso)
+    for f in _ls(pasta(CTX["pasta_dat"])):
+        if f.name.lower() == alvo:
+            arq.update(dat=f.path, nome_dat=f.name)
+            return f.size
+    return None
 
 
 def status_por_arquivo(nomes):
@@ -368,14 +391,16 @@ def pendentes(cod=None, diag=None):
     Falha ao listar a pasta = FalhaLanding (o job falha)."""
     caminho = pasta(CTX["pasta_ctl"])
     info = {}
-    nomes = [f.name for f in _ls(caminho, obrigatoria=True, info=info) if not f.isDir()]
+    lidos = [f for f in _ls(caminho, obrigatoria=True, info=info) if not f.isDir()]
+    nomes = [f.name for f in lidos]
     arqs, fora = [], []
-    for n in nomes:
-        a = ler_nome(n)
+    for f in lidos:
+        a = ler_nome(f.name)
         if not a:
-            fora.append(n)                  # fora do padrão <cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: ignorado
+            fora.append(f)                  # fora do padrão <cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL
         elif cod is None or a["cod"] == cod:
             arqs.append(a)
+    movidos = mover_invalidos(fora) if cod is None else []
     st = status_por_arquivo([a["nome_ctl"] for a in arqs])
     travados, inativos = objetos_travados(), objetos_inativos()
     ignorados = {"concluido": [], "travado": [], "inativo": []}
@@ -396,9 +421,43 @@ def pendentes(cod=None, diag=None):
             continue
         grupos.setdefault(a["cod"], []).append(a)
     if diag is not None:
-        diag.update(pasta=caminho, criada=info.get("criada", False), arquivos=len(nomes), fora_do_padrao=fora,
+        diag.update(pasta=caminho, criada=info.get("criada", False), arquivos=len(nomes),
+                    fora_do_padrao=[f.name for f in fora if f.name not in movidos], movidos=movidos,
                     pendentes=sum(len(v) for v in grupos.values()), **ignorados)
     return {cod: sorted(v, key=lambda a: a["dt_ger"]) for cod, v in grupos.items()}
+
+
+def mover_invalidos(arquivos):
+    """Arquivos da pasta de CTL com nome fora do padrão, parados há mais de mover_invalido_min minutos: vão para
+    pasta_erro (o CTL e, se for um .ctl/.CTL, o .dat de mesmo nome em pasta_dat) e geram o evento NOME_INVALIDO
+    (não trava objeto). Os mais novos esperam: podem estar sendo gravados."""
+    limite_ms = (time.time() - float(CTX["mover_invalido_min"]) * 60) * 1000
+    movidos, evs = [], []
+    for f in arquivos:
+        if f.modificationTime > limite_ms:
+            continue
+        try:
+            CTX["dbutils"].fs.mv(f.path, pasta(f"{CTX['pasta_erro']}/{f.name}"))
+        except Exception as e:
+            print(f"não consegui mover {f.name} para {CTX['pasta_erro']}: {e}")
+            continue
+        base, _, ext = f.name.rpartition(".")
+        dat = None
+        if ext.lower() == "ctl":
+            for nome_dat in (f"{base}.dat", f"{base}.DAT"):
+                try:
+                    CTX["dbutils"].fs.mv(pasta(f"{CTX['pasta_dat']}/{nome_dat}"), pasta(f"{CTX['pasta_erro']}/{nome_dat}"))
+                    dat = nome_dat
+                    break
+                except Exception:
+                    pass                    # sem DAT de mesmo nome
+        c = re.match(r"^(\d+)_", f.name)
+        evs.append(({"cod": int(c.group(1)) if c else None, "nome_ctl": f.name, "nome_dat": dat}, "NOME_INVALIDO",
+                    {"mensagem": f"nome fora do padrão <cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: "
+                                 f"movido para {CTX['pasta_erro']}/" + (f" com {dat}" if dat else "")}))
+        movidos.append(f.name)
+    eventos(evs)
+    return movidos
 
 
 def resumo_pasta(diag, limite=5):
@@ -411,9 +470,13 @@ def resumo_pasta(diag, limite=5):
         partes.append("a pasta não existia e foi criada agora (se o Netezza grava em outro lugar, confira landing e pasta_ctl)")
     elif not diag["arquivos"]:
         partes.append("pasta vazia (confira landing e pasta_ctl se o CTL foi gravado)")
+    if diag.get("movidos"):
+        partes.append(f"{len(diag['movidos'])} com nome fora do padrão movido(s) para {CTX['pasta_erro']}/: "
+                      f"{mostra(diag['movidos'])}")
     if diag["fora_do_padrao"]:
         partes.append(f"{len(diag['fora_do_padrao'])} ignorado(s) por nome fora do padrão "
-                      f"<cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: {mostra(diag['fora_do_padrao'])}")
+                      f"<cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL (vão para {CTX['pasta_erro']}/ "
+                      f"depois de {CTX['mover_invalido_min']} min na pasta): {mostra(diag['fora_do_padrao'])}")
     for chave, texto in (("travado", "de objeto travado (ver v_objeto_travado; DESBLOQUEIO)"),
                          ("inativo", "de objeto com ativo = false na ctl_parametros"),
                          ("concluido", "já concluído(s) (sobra apagada)")):
@@ -425,6 +488,7 @@ def resumo_pasta(diag, limite=5):
 def apagar_par(arq):
     """Sucesso: apaga o CTL primeiro. Se cair no meio, sobra só um DAT órfão (inofensivo)."""
     CTX["dbutils"].fs.rm(arq["ctl"])
+    resolver_dat(arq)
     try:
         CTX["dbutils"].fs.rm(arq["dat"])
     except Exception:
@@ -433,6 +497,7 @@ def apagar_par(arq):
 
 def mover_para_erro(arq):
     """Erro de negócio: move o CTL primeiro, depois o DAT (se existir), para a pasta de erro (pasta_erro)."""
+    resolver_dat(arq)
     for origem, nome in ((arq["ctl"], arq["nome_ctl"]), (arq["dat"], arq["nome_dat"])):
         try:
             CTX["dbutils"].fs.mv(origem, pasta(f"{CTX['pasta_erro']}/{nome}"))
@@ -836,9 +901,10 @@ def limpar_tmp_orfaos():
     pastas = [f for f in _ls(pasta(CTX["pasta_tmp"])) if f.isDir() and ler_nome(f.name.rstrip("/") + ".CTL")]
     if not pastas:
         return
-    st = status_por_arquivo([f.name.rstrip("/") + ".CTL" for f in pastas])
+    nomes = lambda f: [f.name.rstrip("/") + e for e in (".CTL", ".ctl", ".Ctl")]   # extensão em qualquer caixa
+    st = status_por_arquivo([n for f in pastas for n in nomes(f)])
     for f in pastas:
-        if st.get(f.name.rstrip("/") + ".CTL") not in ("ROTEADO", "INICIADO", "CARREGADO"):
+        if not any(st.get(n) in ("ROTEADO", "INICIADO", "CARREGADO") for n in nomes(f)):
             CTX["dbutils"].fs.rm(f.path, True)
             print(f"pasta de limpeza órfã removida: {f.path}")
 
@@ -867,9 +933,11 @@ def validar_ctl(arq, meta_header=True):
     if insts != "0" and not re.fullmatch(r"\d+(,\d+)*", insts):
         raise ErroCarga("ERRO_CTL", f"lista de instituições inválida: {insts}")
     try:
-        tamanho = CTX["dbutils"].fs.ls(arq["dat"])[0].size     # 1 arquivo: não lista a pasta inteira
+        tamanho = resolver_dat(arq)                          # .dat ou .DAT; 1 arquivo: não lista a pasta inteira
     except Exception:
-        raise ErroCarga("ERRO_PAR", f"CTL sem o DAT {arq['nome_dat']}")
+        tamanho = None
+    if tamanho is None:
+        raise ErroCarga("ERRO_PAR", f"CTL sem o DAT {arq['nome_dat']} (procurado com a extensão em qualquer caixa)")
     # DAT em branco = erro. Precisa ser ANTES da carga: um REPLACE WHERE com 0 linhas apagaria a data inteira.
     if tamanho == 0:
         raise ErroCarga("ERRO_DAT_VAZIO", f"DAT {arq['nome_dat']} com 0 bytes")

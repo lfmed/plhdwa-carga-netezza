@@ -199,6 +199,12 @@ variables:
   vigia_cron:
     description: Agenda do vigia (cron Quartz)
     default: "0 0/15 * * * ?"
+  mover_invalido_min:
+    description: >-
+      Arquivo na pasta de CTL com nome fora do padrão <cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL há
+      mais de N minutos vai para pasta_erro (com o .dat de mesmo nome) e gera o evento NOME_INVALIDO. A espera
+      evita mexer num arquivo que ainda está sendo gravado.
+    default: "5"
   vigia_parado_min:
     description: O vigia dispara o despachante se houver CTL parado há mais de N minutos
     default: "5"

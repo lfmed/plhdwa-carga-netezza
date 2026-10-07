@@ -193,7 +193,7 @@ SELECT arquivo_ctl,
        max_by(fila, evento_ts)        AS fila,
        max_by(mensagem, evento_ts)    AS mensagem,
        max(evento_ts)                 AS ultimo_evento,
-       nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo   -- 1º segmento do nome depois do código (só visualização)
+       nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo   -- 1º segmento do nome depois do código (só visualização)
 FROM ${catalogo}.${schema}.log_carga_evento
 WHERE status <> 'ALERTA_FORMATO'
 GROUP BY arquivo_ctl;
@@ -205,7 +205,7 @@ SELECT cod_objeto,
        max_by(arquivo_ctl, evento_ts) AS arquivo_ctl,
        max_by(mensagem, evento_ts)    AS mensagem,
        max(evento_ts)                 AS desde,
-       nullif(regexp_extract(max_by(arquivo_ctl, evento_ts), '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo
+       nullif(regexp_extract(max_by(arquivo_ctl, evento_ts), '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo
 FROM ${catalogo}.${schema}.log_carga_evento
 WHERE status LIKE 'ERRO%' OR status = 'DESBLOQUEIO'
 GROUP BY cod_objeto
@@ -226,7 +226,7 @@ SELECT arquivo_ctl,
        min(CASE WHEN status = 'CARREGADO' THEN fim END)            AS fim_carga,
        min(CASE WHEN status = 'CONCLUIDO' THEN evento_ts END)      AS concluido_em,
        max(qtd_inserida)                                           AS qtd_inserida,
-       nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo
+       nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo
 FROM ${catalogo}.${schema}.log_carga_evento
 GROUP BY arquivo_ctl
 HAVING concluido_em IS NOT NULL;
@@ -265,7 +265,7 @@ SELECT arquivo_ctl,
        max(tamanho_bytes)                                    AS tamanho_bytes,
        max(evento_ts)                                        AS desde,
        unix_timestamp(current_timestamp()) - unix_timestamp(max(evento_ts)) AS segundos,
-       nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo
+       nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo
 FROM ${catalogo}.${schema}.log_carga_evento
 WHERE evento_ts >= current_timestamp() - INTERVAL 12 HOURS AND status NOT IN ('ALERTA_FORMATO', 'DESBLOQUEIO')
 GROUP BY arquivo_ctl

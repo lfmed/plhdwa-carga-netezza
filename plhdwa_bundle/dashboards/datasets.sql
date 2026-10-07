@@ -110,7 +110,7 @@ SELECT cod_objeto, grupo, erro, arquivo_ctl, left(mensagem, 400) AS mensagem, de
 FROM __PLH__.v_objeto_travado;
 
 -- ds: eventos
-SELECT evento_ts, cod_objeto, nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo, arquivo_ctl, status, fila,
+SELECT evento_ts, cod_objeto, nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo, arquivo_ctl, status, fila,
        tipo_job, tabela_destino, left(mensagem, 300) AS mensagem
 FROM __PLH__.log_carga_evento
 WHERE evento_ts >= date_sub(current_date(), 1)
