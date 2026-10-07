@@ -30,7 +30,7 @@ SELECT fila AS modo, pendentes_qtd, round(pendentes_bytes / 1048576, 1) AS pende
 FROM __PLH__.v_projecao_termino;
 
 -- ds: em_execucao
-SELECT arquivo_ctl, cod_objeto, estado, modo, tipo_job, lote_id, job_run_id, round(tamanho_bytes / 1048576, 1) AS mb,
+SELECT arquivo_ctl, grupo, cod_objeto, estado, modo, tipo_job, lote_id, job_run_id, round(tamanho_bytes / 1048576, 1) AS mb,
        desde, segundos
 FROM __PLH__.v_em_execucao
 ORDER BY desde;
@@ -43,7 +43,7 @@ WITH concluidos AS (
   WHERE status = 'CONCLUIDO' AND evento_ts >= current_timestamp() - INTERVAL 12 HOURS
   GROUP BY 1, 2
 )
-SELECT e.cod_objeto, e.tabela_destino, e.modo, e.tipo_job, e.estado, e.arquivo_ctl AS arquivo_atual,
+SELECT e.cod_objeto, e.grupo, e.tabela_destino, e.modo, e.tipo_job, e.estado, e.arquivo_ctl AS arquivo_atual,
        round(e.tamanho_bytes / 1048576, 1) AS mb, e.desde, e.segundos, e.lote_id,
        coalesce(c.concluidos_no_lote, 0) AS concluidos_no_lote
 FROM __PLH__.v_em_execucao e
@@ -106,18 +106,19 @@ FROM __PLH__.log_ciclo_despachante
 WHERE ciclo_ts >= date_sub(current_date(), 1);
 
 -- ds: travados
-SELECT cod_objeto, erro, arquivo_ctl, left(mensagem, 400) AS mensagem, desde
+SELECT cod_objeto, grupo, erro, arquivo_ctl, left(mensagem, 400) AS mensagem, desde
 FROM __PLH__.v_objeto_travado;
 
 -- ds: eventos
-SELECT evento_ts, cod_objeto, arquivo_ctl, status, fila, tipo_job, tabela_destino, left(mensagem, 300) AS mensagem
+SELECT evento_ts, cod_objeto, nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo, arquivo_ctl, status, fila,
+       tipo_job, tabela_destino, left(mensagem, 300) AS mensagem
 FROM __PLH__.log_carga_evento
 WHERE evento_ts >= date_sub(current_date(), 1)
 ORDER BY evento_ts DESC
 LIMIT 2000;
 
 -- ds: desempenho
-SELECT arquivo_ctl, cod_objeto, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, lote_id,
+SELECT arquivo_ctl, grupo, cod_objeto, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, lote_id,
        round(tamanho_bytes / 1048576, 1)                                         AS tamanho_mb,
        unix_timestamp(concluido_em) - unix_timestamp(roteado_em)                 AS duracao_s,
        unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)                  AS carga_s,

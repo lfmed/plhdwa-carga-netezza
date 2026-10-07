@@ -38,7 +38,7 @@
    "name": "em_execucao",
    "displayName": "em_execucao",
    "queryLines": [
-    "SELECT arquivo_ctl, cod_objeto, estado, modo, tipo_job, lote_id, job_run_id, round(tamanho_bytes / 1048576, 1) AS mb,\n",
+    "SELECT arquivo_ctl, grupo, cod_objeto, estado, modo, tipo_job, lote_id, job_run_id, round(tamanho_bytes / 1048576, 1) AS mb,\n",
     "       desde, segundos\n",
     "FROM v_em_execucao\n",
     "ORDER BY desde\n"
@@ -55,7 +55,7 @@
     "  WHERE status = 'CONCLUIDO' AND evento_ts >= current_timestamp() - INTERVAL 12 HOURS\n",
     "  GROUP BY 1, 2\n",
     ")\n",
-    "SELECT e.cod_objeto, e.tabela_destino, e.modo, e.tipo_job, e.estado, e.arquivo_ctl AS arquivo_atual,\n",
+    "SELECT e.cod_objeto, e.grupo, e.tabela_destino, e.modo, e.tipo_job, e.estado, e.arquivo_ctl AS arquivo_atual,\n",
     "       round(e.tamanho_bytes / 1048576, 1) AS mb, e.desde, e.segundos, e.lote_id,\n",
     "       coalesce(c.concluidos_no_lote, 0) AS concluidos_no_lote\n",
     "FROM v_em_execucao e\n",
@@ -126,7 +126,7 @@
    "name": "travados",
    "displayName": "travados",
    "queryLines": [
-    "SELECT cod_objeto, erro, arquivo_ctl, left(mensagem, 400) AS mensagem, desde\n",
+    "SELECT cod_objeto, grupo, erro, arquivo_ctl, left(mensagem, 400) AS mensagem, desde\n",
     "FROM v_objeto_travado\n"
    ]
   },
@@ -134,7 +134,8 @@
    "name": "eventos",
    "displayName": "eventos",
    "queryLines": [
-    "SELECT evento_ts, cod_objeto, arquivo_ctl, status, fila, tipo_job, tabela_destino, left(mensagem, 300) AS mensagem\n",
+    "SELECT evento_ts, cod_objeto, nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo, arquivo_ctl, status, fila,\n",
+    "       tipo_job, tabela_destino, left(mensagem, 300) AS mensagem\n",
     "FROM log_carga_evento\n",
     "WHERE evento_ts >= date_sub(current_date(), 1)\n",
     "ORDER BY evento_ts DESC\n",
@@ -157,7 +158,7 @@
    "name": "desempenho",
    "displayName": "desempenho",
    "queryLines": [
-    "SELECT arquivo_ctl, cod_objeto, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, lote_id,\n",
+    "SELECT arquivo_ctl, grupo, cod_objeto, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, lote_id,\n",
     "       round(tamanho_bytes / 1048576, 1)                                         AS tamanho_mb,\n",
     "       unix_timestamp(concluido_em) - unix_timestamp(roteado_em)                 AS duracao_s,\n",
     "       unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)                  AS carga_s,\n",
@@ -611,6 +612,10 @@
            "expression": "`cod_objeto`"
           },
           {
+           "name": "grupo",
+           "expression": "`grupo`"
+          },
+          {
            "name": "tabela_destino",
            "expression": "`tabela_destino`"
           },
@@ -659,6 +664,10 @@
          {
           "fieldName": "cod_objeto",
           "displayName": "Objeto"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo"
          },
          {
           "fieldName": "tabela_destino",
@@ -863,6 +872,10 @@
            "expression": "`cod_objeto`"
           },
           {
+           "name": "grupo",
+           "expression": "`grupo`"
+          },
+          {
            "name": "estado",
            "expression": "`estado`"
           },
@@ -911,6 +924,10 @@
          {
           "fieldName": "cod_objeto",
           "displayName": "Objeto"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo"
          },
          {
           "fieldName": "estado",
@@ -1401,7 +1418,7 @@
      "position": {
       "x": 0,
       "y": 1,
-      "width": 3,
+      "width": 2,
       "height": 2
      }
     },
@@ -1442,9 +1459,52 @@
       }
      },
      "position": {
-      "x": 3,
+      "x": 2,
       "y": 1,
-      "width": 3,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_grupo",
+      "queries": [
+       {
+        "name": "eventos_grupo",
+        "query": {
+         "datasetName": "eventos",
+         "fields": [
+          {
+           "name": "grupo",
+           "expression": "`grupo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo",
+          "queryName": "eventos_grupo"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Grupo"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 1,
+      "width": 2,
       "height": 2
      }
     },
@@ -1460,6 +1520,10 @@
           {
            "name": "cod_objeto",
            "expression": "`cod_objeto`"
+          },
+          {
+           "name": "grupo",
+           "expression": "`grupo`"
           },
           {
            "name": "erro",
@@ -1490,6 +1554,10 @@
          {
           "fieldName": "cod_objeto",
           "displayName": "Objeto"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo"
          },
          {
           "fieldName": "erro",
@@ -1540,6 +1608,10 @@
            "expression": "`cod_objeto`"
           },
           {
+           "name": "grupo",
+           "expression": "`grupo`"
+          },
+          {
            "name": "status",
            "expression": "`status`"
           },
@@ -1576,6 +1648,10 @@
          {
           "fieldName": "cod_objeto",
           "displayName": "Objeto"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo"
          },
          {
           "fieldName": "status",
@@ -1903,6 +1979,10 @@
            "expression": "`cod_objeto`"
           },
           {
+           "name": "grupo",
+           "expression": "`grupo`"
+          },
+          {
            "name": "modo",
            "expression": "`modo`"
           },
@@ -1947,6 +2027,10 @@
          {
           "fieldName": "cod_objeto",
           "displayName": "Objeto"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo"
          },
          {
           "fieldName": "modo",

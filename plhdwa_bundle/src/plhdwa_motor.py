@@ -25,7 +25,8 @@ import uuid
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# Nome dos arquivos: <cod>_<tabela>_<data_mov yyyyMMdd>_<data_geracao yyyyMMddHHmmss>.<dat|CTL>
+# Nome dos arquivos: <cod>_[<nomegrupo>_]<nome>_<data_mov yyyyMMdd>_<data_geracao yyyyMMddHHmmss>.<dat|CTL>
+# (o grupo é o 1º segmento depois do código, só para visualização; a carga olha só o código)
 RX_NOME = re.compile(r"^(\d+)_(.+)_(\d{8})_(\d{14})\.(dat|CTL)$")
 MODOS = ("DESPACHANTE", "JOB")
 
@@ -300,7 +301,9 @@ def ler_nome(nome_ctl):
     if not m or m.group(5) != "CTL":
         return None
     base = nome_ctl[:-4]
-    return {"cod": int(m.group(1)), "tabela_nome": m.group(2), "dt_mov": m.group(3), "dt_ger": m.group(4),
+    # <cod>_<nomegrupo>_<nome>_...: o grupo (1º segmento, sem '_') é só para visualização; a carga usa só o código
+    grupo, _, nome = m.group(2).partition("_")
+    return {"cod": int(m.group(1)), "tabela_nome": m.group(2), "grupo": grupo if nome else "", "nome": nome or grupo, "dt_mov": m.group(3), "dt_ger": m.group(4),
             "base": base, "nome_ctl": nome_ctl, "nome_dat": base + ".dat",
             "ctl": pasta(f"{CTX['pasta_ctl']}/{nome_ctl}"), "dat": pasta(f"{CTX['pasta_dat']}/{base}.dat")}
 
@@ -370,7 +373,7 @@ def pendentes(cod=None, diag=None):
     for n in nomes:
         a = ler_nome(n)
         if not a:
-            fora.append(n)                  # fora do padrão <cod>_<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: ignorado
+            fora.append(n)                  # fora do padrão <cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: ignorado
         elif cod is None or a["cod"] == cod:
             arqs.append(a)
     st = status_por_arquivo([a["nome_ctl"] for a in arqs])
@@ -410,7 +413,7 @@ def resumo_pasta(diag, limite=5):
         partes.append("pasta vazia (confira landing e pasta_ctl se o CTL foi gravado)")
     if diag["fora_do_padrao"]:
         partes.append(f"{len(diag['fora_do_padrao'])} ignorado(s) por nome fora do padrão "
-                      f"<cod>_<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: {mostra(diag['fora_do_padrao'])}")
+                      f"<cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: {mostra(diag['fora_do_padrao'])}")
     for chave, texto in (("travado", "de objeto travado (ver v_objeto_travado; DESBLOQUEIO)"),
                          ("inativo", "de objeto com ativo = false na ctl_parametros"),
                          ("concluido", "já concluído(s) (sobra apagada)")):

@@ -125,6 +125,12 @@ Ajustes **sem deploy**, feitos pelo owner:
 
 ## 5. Cadastrar objetos (tabela `ctl_parametros`)
 
+**Nome dos arquivos:** `<cod>_[<nomegrupo>_]<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL` (e o `.dat` com o mesmo nome),
+por exemplo `57_FINANCEIRO_DIM_BEM_IMOVEL_20260930_20260930155333.CTL`. A carga olha **só o código** (1º campo). O grupo
+é o 1º segmento depois do código (sem `_`) e serve só para visualização: coluna `grupo` em `v_status_arquivo`,
+`v_arquivo_concluido`, `v_em_execucao`, `v_objeto_travado` e nos dashboards (com filtro). Nome no padrão antigo, sem
+grupo, continua valendo; nesse caso o 1º segmento do nome aparece como grupo (nome de um segmento só = grupo vazio).
+
 Os parâmetros de cada objeto ficam numa linha da **`<catalogo>.<schema>.ctl_parametros`** (criada pelo pós-deploy).
 O motor **não usa tags nem TBLPROPERTIES** (só a tag `OWNER`, de governança). Da tabela destino ele usa apenas o
 layout: colunas, ordem e tipos.
