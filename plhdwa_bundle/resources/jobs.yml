@@ -33,6 +33,7 @@ resources:
         - {name: pasta_erro, default: "${var.pasta_erro}"}
         - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
+        - {name: usar_db2, default: "${var.usar_db2}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
         - {name: db2_porta, default: "${var.db2_porta}"}
@@ -105,6 +106,7 @@ resources:
         - {name: pasta_erro, default: "${var.pasta_erro}"}
         - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
+        - {name: usar_db2, default: "${var.usar_db2}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
         - {name: db2_porta, default: "${var.db2_porta}"}
@@ -214,6 +216,7 @@ resources:
               max_simult_job: "${var.max_simult_job}"
               job_perf: "${resources.jobs.plhdwa_carga_arquivo_perf.id}"
               job_std: "${resources.jobs.plhdwa_carga_arquivo_std.id}"
+              usar_db2: "${var.usar_db2}"
               db2_modo: "${var.db2_modo}"
               lakebase_instance: "${var.lakebase_instance}"
               lakebase_database: "${var.lakebase_database}"
@@ -237,6 +240,7 @@ resources:
         - {name: pasta_erro, default: "${var.pasta_erro}"}
         - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
+        - {name: usar_db2, default: "${var.usar_db2}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
         - {name: db2_porta, default: "${var.db2_porta}"}
@@ -278,6 +282,7 @@ resources:
         - {name: pasta_erro, default: "${var.pasta_erro}"}
         - {name: pasta_tmp, default: "${var.pasta_tmp}"}
         - {name: fuso_horario, default: "${var.fuso_horario}"}
+        - {name: usar_db2, default: "${var.usar_db2}"}
         - {name: db2_modo, default: "${var.db2_modo}"}
         - {name: db2_host, default: "${var.db2_host}"}
         - {name: db2_porta, default: "${var.db2_porta}"}

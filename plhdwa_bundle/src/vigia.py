@@ -18,9 +18,14 @@ w = WorkspaceClient()
 
 # CTLs que estão na pasta há mais tempo que o limite e ainda não foram concluídos (nem são de objeto travado)
 limite_ms = (time.time() - float(P["vigia_parado_min"]) * 60) * 1000
-antigos = {f.name for f in m._ls(m.pasta(m.CTX["pasta_ctl"])) if f.modificationTime < limite_ms}
-pend = [a for arqs in m.pendentes().values() for a in arqs if a["nome_ctl"] in antigos]
+# Pasta que não pode ser listada = FalhaLanding: o vigia termina com erro, com o motivo na mensagem, em vez de
+# achar que a pasta está vazia.
+diag = {}
+pend_todos = m.pendentes(diag=diag)            # lista a pasta (FalhaLanding se não conseguir)
+antigos = {f.name for f in m._ls(m.pasta(m.CTX["pasta_ctl"]), obrigatoria=True) if f.modificationTime < limite_ms}
+pend = [a for arqs in pend_todos.values() for a in arqs if a["nome_ctl"] in antigos]
 rodando = list(w.jobs.list_runs(job_id=int(P["despachante_job_id"]), active_only=True))
+print(m.resumo_pasta(diag))
 print(f"pendentes há mais de {P['vigia_parado_min']} min: {len(pend)} · despachante rodando: {bool(rodando)}")
 if pend and not rodando:
     w.jobs.run_now(job_id=int(P["despachante_job_id"]))

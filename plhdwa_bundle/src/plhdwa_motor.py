@@ -61,6 +61,9 @@ PARAMETROS = {
                                                "VOLUME = volume do Unity Catalog (/Volumes/...)"),
     "fuso_horario":       ("America/Sao_Paulo", "fuso das datas de geração dos nomes de arquivo e dos horários do log"),
     # --- controle (Db2) ---
+    "usar_db2":           ("sim",              "sim = executa as etapas da controle no Db2 (CONCLUIDO/ERRO e, com "
+                                               "db2_registrar_inicio, EM_PROCESSAMENTO); nao = não executa nenhuma "
+                                               "etapa do Db2 (sem conexão; o log não tem CONFIRMADO_DB2)"),
     "db2_modo":           ("DB2",              "DB2 (controle no Db2 do cliente) ou SIMULADO (Lakebase, só para testes)"),
     "db2_host":           ("",                 "host do Db2"),
     "db2_porta":          ("50000",            "porta do Db2"),
@@ -112,7 +115,7 @@ PARAMETROS = {
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
 COMUNS = ["catalogo", "schema", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
           "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb",
-          "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
+          "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
           "db2_espera_base_s", "db2_registrar_inicio",
@@ -140,6 +143,10 @@ def iniciar(spark, dbutils, params):
     # Datas de geração vêm em horário de Brasília: a sessão inteira trabalha nesse fuso.
     spark.conf.set("spark.sql.session.timeZone", CTX["fuso_horario"])
     validar_landing()
+    v = str(CTX["usar_db2"]).strip().lower()
+    if v not in ("sim", "nao", "não"):
+        raise ValueError(f"usar_db2 inválido: {CTX['usar_db2']!r} (use sim ou nao)")
+    CTX["usar_db2"] = "sim" if v == "sim" else "nao"
     for c in [CTX["catalogo"], CTX["schema"], CTX["lakebase_tabela"], CTX["db2_tabela"] or "x"]:
         if not re.fullmatch(r"[A-Za-z0-9_.]+", c):   # vão em SQL montado por texto: só nomes simples
             raise ValueError(f"nome inválido em parâmetro: {c!r}")
@@ -298,11 +305,41 @@ def ler_nome(nome_ctl):
             "ctl": pasta(f"{CTX['pasta_ctl']}/{nome_ctl}"), "dat": pasta(f"{CTX['pasta_dat']}/{base}.dat")}
 
 
-def _ls(caminho):
-    try:
-        return CTX["dbutils"].fs.ls(caminho)
-    except Exception:
-        return []
+class FalhaLanding(Exception):
+    """Não foi possível listar uma pasta da landing (permissão, external location com problema, rede...)."""
+
+
+_SINAIS_INEXISTENTE = ("FileNotFound", "No such file", "does not exist", "PATH_NOT_FOUND")
+
+
+def _ls(caminho, obrigatoria=False, tentativas=3, info=None):
+    """Lista uma pasta.
+    obrigatoria=False: qualquer erro = lista vazia.
+    obrigatoria=True (pasta de CTL, no despachante e no vigia): erro de acesso (permissão, external location com
+    problema) é tentado de novo e, persistindo, levanta FalhaLanding com o erro real: o job falha com o motivo (antes
+    virava "pasta vazia" e o lote terminava sem processar nada e sem erro). Pasta inexistente: o motor cria a pasta
+    (no S3 ela some quando o último CTL é apagado); se não conseguir criar (bucket ou prefixo errado, sem permissão
+    de escrita), FalhaLanding. info (dict) recebe criada = True quando a pasta não existia."""
+    for t in range(tentativas if obrigatoria else 1):
+        try:
+            return CTX["dbutils"].fs.ls(caminho)
+        except Exception as e:
+            msg = str(e)
+            if not obrigatoria:
+                return []
+            if any(x in msg for x in _SINAIS_INEXISTENTE):
+                try:
+                    CTX["dbutils"].fs.mkdirs(caminho)
+                except Exception as e2:
+                    raise FalhaLanding(f"não consegui listar {caminho}: a pasta não existe e não foi possível criá-la "
+                                       f"(confira landing e pasta_ctl, a external location e a permissão de escrita): "
+                                       f"{str(e2)[:1200]}")
+                if info is not None:
+                    info["criada"] = True
+                return []
+            if t == tentativas - 1:
+                raise FalhaLanding(f"não consegui listar {caminho} ({tentativas} tentativas): {msg[:1500]}")
+            time.sleep(5 * (t + 1))
 
 
 def tamanhos_dat():
@@ -321,24 +358,65 @@ def objetos_travados():
     return {r.cod_objeto for r in CTX["spark"].table(fq("v_objeto_travado")).select("cod_objeto").collect()}
 
 
-def pendentes(cod=None):
+def pendentes(cod=None, diag=None):
     """CTLs da pasta de CTL ainda não concluídos, de objetos não travados nem inativos, agrupados por objeto e em ordem de geração.
-    cod: só os desse objeto (usado pelo job independente para seguir com o próximo arquivo do mesmo objeto)."""
-    arqs = [a for a in (ler_nome(f.name) for f in _ls(pasta(CTX["pasta_ctl"]))) if a and (cod is None or a["cod"] == cod)]
+    cod: só os desse objeto (usado pelo job independente para seguir com o próximo arquivo do mesmo objeto).
+    diag (dict, opcional): recebe o que foi visto na pasta e o motivo de cada CTL não ter entrado (resumo_pasta).
+    Falha ao listar a pasta = FalhaLanding (o job falha)."""
+    caminho = pasta(CTX["pasta_ctl"])
+    info = {}
+    nomes = [f.name for f in _ls(caminho, obrigatoria=True, info=info) if not f.isDir()]
+    arqs, fora = [], []
+    for n in nomes:
+        a = ler_nome(n)
+        if not a:
+            fora.append(n)                  # fora do padrão <cod>_<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: ignorado
+        elif cod is None or a["cod"] == cod:
+            arqs.append(a)
     st = status_por_arquivo([a["nome_ctl"] for a in arqs])
-    parados = objetos_travados() | objetos_inativos()
+    travados, inativos = objetos_travados(), objetos_inativos()
+    ignorados = {"concluido": [], "travado": [], "inativo": []}
     grupos = {}
     for a in arqs:
         if st.get(a["nome_ctl"]) == "CONCLUIDO":
+            ignorados["concluido"].append(a["nome_ctl"])
             try:
                 apagar_par(a)          # sobra de uma execução que caiu entre o log e a remoção
             except Exception:
                 pass
             continue
-        if a["cod"] in parados:             # travado (erro) ou inativo na ctl_parametros
+        if a["cod"] in travados:            # erro anterior sem DESBLOQUEIO
+            ignorados["travado"].append(a["nome_ctl"])
+            continue
+        if a["cod"] in inativos:            # ativo = false na ctl_parametros
+            ignorados["inativo"].append(a["nome_ctl"])
             continue
         grupos.setdefault(a["cod"], []).append(a)
+    if diag is not None:
+        diag.update(pasta=caminho, criada=info.get("criada", False), arquivos=len(nomes), fora_do_padrao=fora,
+                    pendentes=sum(len(v) for v in grupos.values()), **ignorados)
     return {cod: sorted(v, key=lambda a: a["dt_ger"]) for cod, v in grupos.items()}
+
+
+def resumo_pasta(diag, limite=5):
+    """Texto do que foi visto na pasta de CTL (vai para log_lote.mensagem e para a saída do job)."""
+    if not diag:
+        return ""
+    mostra = lambda xs: ", ".join(xs[:limite]) + (f" e mais {len(xs) - limite}" if len(xs) > limite else "")
+    partes = [f"{diag['pasta']}: {diag['arquivos']} arquivo(s), {diag['pendentes']} CTL pendente(s)"]
+    if diag.get("criada"):
+        partes.append("a pasta não existia e foi criada agora (se o Netezza grava em outro lugar, confira landing e pasta_ctl)")
+    elif not diag["arquivos"]:
+        partes.append("pasta vazia (confira landing e pasta_ctl se o CTL foi gravado)")
+    if diag["fora_do_padrao"]:
+        partes.append(f"{len(diag['fora_do_padrao'])} ignorado(s) por nome fora do padrão "
+                      f"<cod>_<nome>_<yyyyMMdd>_<yyyyMMddHHmmss>.CTL: {mostra(diag['fora_do_padrao'])}")
+    for chave, texto in (("travado", "de objeto travado (ver v_objeto_travado; DESBLOQUEIO)"),
+                         ("inativo", "de objeto com ativo = false na ctl_parametros"),
+                         ("concluido", "já concluído(s) (sobra apagada)")):
+        if diag[chave]:
+            partes.append(f"{len(diag[chave])} {texto}: {mostra(diag[chave])}")
+    return " · ".join(partes)
 
 
 def apagar_par(arq):
@@ -1159,10 +1237,17 @@ def _gravar_controle(arq, status, insts, modo, qtd, inicio, fim, mensagem):
      .write.mode("append").saveAsTable(fq("db2_controle_sim")))
 
 
+def usa_db2():
+    """Parâmetro usar_db2: sim = executa as etapas da controle; nao = pula todas (nem conecta no Db2)."""
+    return CTX.get("usar_db2", "sim") == "sim"
+
+
 def sensibilizar_controle(arq, status, insts, modo, qtd=None, inicio=None, fim=None, mensagem=None, tentativas=None):
     """Grava o status DESTE arquivo na controle: CONCLUIDO ou ERRO (e EM_PROCESSAMENTO, com db2_registrar_inicio).
     Síncrono, com novas tentativas (espera crescente). Falhou todas: lança FalhaControle.
-    tentativas: padrão = parâmetro db2_tentativas."""
+    tentativas: padrão = parâmetro db2_tentativas. Com usar_db2 = nao, não faz nada."""
+    if not usa_db2():
+        return
     tentativas = tentativas or int(CTX["db2_tentativas"])
     base = float(CTX.get("db2_espera_base_s") or 30)
     erro = None
@@ -1220,7 +1305,7 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
         #    carrega. Padrão (false): o Db2 só recebe o fim (CONCLUIDO ou ERRO); o início fica no log (INICIADO).
         #    Se o Db2 estiver fora, a carga acontece e só a conclusão falha (ERRO_DB2): os arquivos ficam em raw/
         #    e, depois do DESBLOQUEIO, a retomada refaz só a conclusão, sem carregar de novo.
-        if str(CTX["db2_registrar_inicio"]).lower() == "true":
+        if usa_db2() and str(CTX["db2_registrar_inicio"]).lower() == "true":
             try:
                 sensibilizar_controle(arq, "EM_PROCESSAMENTO", insts, modo, inicio=inicio)
             except FalhaControle as e:
@@ -1250,15 +1335,18 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
                                             "versao": versao, "mensagem": limpeza}))
 
         # 2) controle: este arquivo terminou (com a quantidade). Se a controle falhar: ERRO_DB2 e trava.
+        #    Com usar_db2 = nao, pula a controle (e o CONFIRMADO_DB2) e conclui direto.
         fim = time.time()
-        try:
-            sensibilizar_controle(arq, "CONCLUIDO", insts, modo, qtd=inseridas, inicio=inicio, fim=fim)
-        except FalhaControle as e:
-            raise ErroCarga("ERRO_DB2", f"controle não registrou a conclusão: {e}", mover=False)
+        confirmacao = []
+        if usa_db2():
+            try:
+                sensibilizar_controle(arq, "CONCLUIDO", insts, modo, qtd=inseridas, inicio=inicio, fim=fim)
+            except FalhaControle as e:
+                raise ErroCarga("ERRO_DB2", f"controle não registrou a conclusão: {e}", mover=False)
+            confirmacao = [(arq, "CONFIRMADO_DB2", {**comum(), "ts": time.time()})]
         confirmado = time.time()
-        eventos(pend + [(arq, "CONFIRMADO_DB2", {**comum(), "ts": confirmado}),
-                        (arq, "CONCLUIDO", {**comum(), "ts": max(time.time(), confirmado + 0.001),
-                                            "inicio": inicio, "fim": fim, "qtd_inserida": inseridas})])
+        eventos(pend + confirmacao + [(arq, "CONCLUIDO", {**comum(), "ts": max(time.time(), confirmado + 0.001),
+                                                          "inicio": inicio, "fim": fim, "qtd_inserida": inseridas})])
         apagar_par(arq)                                 # log antes de apagar: se cair no meio, só sobra arquivo
         return True
 
@@ -1272,7 +1360,8 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
             mover = False                               # dados já no Delta: arquivos ficam nas pastas de entrada para a retomada
         fim = time.time()
         eventos(pend + [(arq, tipo, {**comum(), "inicio": inicio, "fim": fim, "mensagem": msg})])
-        # 3) controle: este arquivo deu erro (melhor esforço: se a própria controle estiver fora, só registra no log)
+        # 3) controle: este arquivo deu erro (melhor esforço: se a própria controle estiver fora, só registra no log;
+        #    com usar_db2 = nao, sensibilizar_controle não faz nada)
         try:
             sensibilizar_controle(arq, "ERRO", insts, modo, inicio=inicio, fim=fim, mensagem=f"{tipo}: {msg}",
                                   tentativas=1 if tipo == "ERRO_DB2" else 2)

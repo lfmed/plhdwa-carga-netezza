@@ -33,6 +33,8 @@ for nome, padrao in [("criar_tabela", "false"), ("gravar_teste", "true"), ("apag
     P[nome] = dbutils.widgets.get(nome).lower() == "true"
 P["db2_modo"] = "DB2"
 m.iniciar(spark, dbutils, P)
+if not m.usa_db2():
+    dbutils.notebook.exit("usar_db2 = nao: o motor não executa as etapas do Db2; nada a testar")
 tabela = m.CTX["db2_tabela"]
 if not tabela:
     raise ValueError("variável db2_tabela vazia")

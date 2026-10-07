@@ -97,37 +97,41 @@ if spark.catalog.tableExists(fq("teste_fato_9109")) and any(r["cenario"] == "esc
 
 # COMMAND ----------
 
-# 7) Controle: cada CONCLUIDO tem linha CONCLUIDO no histórico Delta e na controle (Db2 ou Lakebase simulado)
-concluidos = [n for n, s in status.items() if s == "CONCLUIDO"]
-delta = {r.arquivo for r in spark.table(fq("db2_controle_sim"))
-         .filter(F.col("arquivo").isin(concluidos) & (F.col("status") == "CONCLUIDO")).collect()}
-registrar("db2", "CONCLUIDO com linha no histórico da controle (Delta)", set(concluidos) <= delta, set(concluidos) - delta)
-if P["db2_modo"] == "DB2":
-    # o nome do CTL fica em ARQUIVO (layout padrão) ou NOME_JOB (layout CONTROLE); status CONCLUIDO
-    no_db2 = set()
-    for coluna in ("ARQUIVO", "NOME_JOB"):
-        try:
-            with m.conexao_db2() as con:
-                cur = con.cursor()
-                cur.execute(f"SELECT TRIM({coluna}) FROM {P['db2_tabela']} WHERE TRIM(STATUS) = 'CONCLUIDO'")
-                no_db2 = {r[0] for r in cur.fetchall()}
-            break
-        except Exception:
-            pass
-    registrar("db2", f"CONCLUIDO na controle do Db2 ({P['db2_tabela']})", set(concluidos) <= no_db2,
-              set(concluidos) - no_db2)
+# 7) Controle: cada CONCLUIDO tem linha CONCLUIDO no histórico Delta e na controle (Db2 ou Lakebase simulado).
+#    Com usar_db2 = nao, a controle não é gravada e esta verificação é pulada.
+if m.usa_db2():
+    concluidos = [n for n, s in status.items() if s == "CONCLUIDO"]
+    delta = {r.arquivo for r in spark.table(fq("db2_controle_sim"))
+             .filter(F.col("arquivo").isin(concluidos) & (F.col("status") == "CONCLUIDO")).collect()}
+    registrar("db2", "CONCLUIDO com linha no histórico da controle (Delta)", set(concluidos) <= delta, set(concluidos) - delta)
+    if P["db2_modo"] == "DB2":
+        # o nome do CTL fica em ARQUIVO (layout padrão) ou NOME_JOB (layout CONTROLE); status CONCLUIDO
+        no_db2 = set()
+        for coluna in ("ARQUIVO", "NOME_JOB"):
+            try:
+                with m.conexao_db2() as con:
+                    cur = con.cursor()
+                    cur.execute(f"SELECT TRIM({coluna}) FROM {P['db2_tabela']} WHERE TRIM(STATUS) = 'CONCLUIDO'")
+                    no_db2 = {r[0] for r in cur.fetchall()}
+                break
+            except Exception:
+                pass
+        registrar("db2", f"CONCLUIDO na controle do Db2 ({P['db2_tabela']})", set(concluidos) <= no_db2,
+                  set(concluidos) - no_db2)
+    else:
+        w = WorkspaceClient()
+        inst = w.database.get_database_instance(name=P["lakebase_instance"])
+        tok = w.database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[inst.name]).token
+        con = pg8000.dbapi.connect(host=inst.read_write_dns, database=P["lakebase_database"],
+                                   user=w.current_user.me().user_name, password=tok, ssl_context=ssl.create_default_context())
+        cur = con.cursor()
+        cur.execute(f"SELECT arquivo FROM {P['lakebase_tabela']} WHERE status = 'CONCLUIDO'")
+        lake = {r[0] for r in cur.fetchall()}
+        con.close()
+        registrar("db2", f"CONCLUIDO na controle simulada ({P['lakebase_tabela']}, Lakebase)", set(concluidos) <= lake,
+                  set(concluidos) - lake)
 else:
-    w = WorkspaceClient()
-    inst = w.database.get_database_instance(name=P["lakebase_instance"])
-    tok = w.database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[inst.name]).token
-    con = pg8000.dbapi.connect(host=inst.read_write_dns, database=P["lakebase_database"],
-                               user=w.current_user.me().user_name, password=tok, ssl_context=ssl.create_default_context())
-    cur = con.cursor()
-    cur.execute(f"SELECT arquivo FROM {P['lakebase_tabela']} WHERE status = 'CONCLUIDO'")
-    lake = {r[0] for r in cur.fetchall()}
-    con.close()
-    registrar("db2", f"CONCLUIDO na controle simulada ({P['lakebase_tabela']}, Lakebase)", set(concluidos) <= lake,
-              set(concluidos) - lake)
+    print("usar_db2 = nao: o motor não grava a controle; verificação da controle pulada")
 
 # 8) Travamento: objetos com erro travados; objetos concluídos não travados
 travados = {r.cod_objeto for r in spark.table(fq("v_objeto_travado")).collect()}

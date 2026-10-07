@@ -72,7 +72,19 @@ listado_em = 0.0
 inicio = time.time()
 m.fechar_lotes_orfaos()                        # lote anterior que caiu/foi cancelado sai de "em andamento"
 m.limpar_tmp_orfaos()                          # arquivos limpos que sobraram em pasta_tmp de uma execução que caiu
-m.lote("INICIADO", pendentes=sum(len(v) for v in m.pendentes().values()))
+# Foto inicial da pasta de CTL, com o motivo de cada CTL que não entra (vai para log_lote e para a saída do job).
+# Se a pasta não puder ser listada, o lote registra a falha e o job termina com erro, com o motivo na mensagem.
+diag = {}
+try:
+    n_pend = sum(len(v) for v in m.pendentes(diag=diag).values())
+except m.FalhaLanding as e:
+    m.lote("INICIADO", pendentes=0, mensagem=str(e))
+    m.lote("FINALIZADO", mensagem="falha ao listar a pasta de CTL: nada processado")
+    raise
+resumo_inicial = m.resumo_pasta(diag)
+print(resumo_inicial)
+m.lote("INICIADO", pendentes=n_pend, mensagem=resumo_inicial)
+falha_listagem = None
 
 
 def runs_ativos():
@@ -175,7 +187,12 @@ def despachar():
 
 while time.time() - inicio < float(P["max_horas"]) * 3600:
     if time.time() - listado_em >= float(P["ciclo_s"]):
-        ciclo_completo()
+        try:
+            ciclo_completo()
+        except m.FalhaLanding as e:         # pasta deixou de ser listável no meio do lote: para de despachar,
+            falha_listagem = e              # espera as threads em andamento terminarem e falha o job
+            print(f"falha ao listar a landing no meio do lote: {e}")
+            break
         if not pend and not threads and not em_job and not lancados:
             break
     despachar()
@@ -201,8 +218,18 @@ pool.shutdown(wait=True)
 # tentativa (mesmo job_run_id) precisa terminar FAILED também, para a execução notificar.
 erros = max(erros, m.sql(f"""SELECT count(DISTINCT cod_objeto) AS n FROM {m.fq('log_carga_evento')}
                               WHERE lote_id = :r AND status LIKE 'ERRO%'""", r=int(P["lote_id"])).first().n)
-m.lote("FINALIZADO", mensagem=f"{erros} objeto(s) com erro" if erros else "sem erros")
-print(f"fim do lote {P['lote_id']}: {erros} objeto(s) com erro")
+processados = m.sql(f"""SELECT count(DISTINCT arquivo_ctl) AS n FROM {m.fq('log_carga_evento')}
+                         WHERE lote_id = :r AND (status = 'CONCLUIDO' OR status LIKE 'ERRO%')""",
+                    r=int(P["lote_id"])).first().n
+fim = f"{processados} arquivo(s) processado(s), " + (f"{erros} objeto(s) com erro" if erros else "sem erros")
+if falha_listagem:
+    fim = f"{fim} · interrompido: {falha_listagem}"
+elif not processados:
+    fim = f"{fim} · nenhum arquivo processado: {resumo_inicial}"
+m.lote("FINALIZADO", mensagem=fim)
+print(f"fim do lote {P['lote_id']}: {fim}")
+if falha_listagem:
+    raise falha_listagem
 if erros:
     # A execução termina FAILED para disparar a notificação; os outros objetos já foram processados.
     raise Exception(f"{erros} objeto(s) com erro: ver v_objeto_travado")

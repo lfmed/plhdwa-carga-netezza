@@ -66,6 +66,13 @@ variables:
     default: America/Sao_Paulo
 
   # ------------------------------------------------------------------ controle (Db2)
+  usar_db2:
+    description: >-
+      "sim" (padrão) = executa as etapas da controle no Db2: grava CONCLUIDO ou ERRO de cada arquivo (e
+      EM_PROCESSAMENTO, com db2_registrar_inicio = "true"). "nao" = não executa nenhuma etapa do Db2: não conecta,
+      não grava a controle e o log não tem CONFIRMADO_DB2; o resto da carga é igual. Com "nao", as variáveis db2_*
+      podem ficar vazias.
+    default: "sim"
   db2_modo:
     description: >-
       DB2 = controle no Db2 do cliente (padrão). SIMULADO = controle numa instância Lakebase, só para testar

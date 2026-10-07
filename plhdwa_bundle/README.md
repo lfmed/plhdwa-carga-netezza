@@ -111,7 +111,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 | Grupo | Variáveis |
 |---|---|
 | Onde ficam as coisas | `catalogo`, `schema`, `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
-| Controle (Db2) | `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
+| Controle (Db2) | `usar_db2` (`sim` · `nao` = não executa nenhuma etapa do Db2), `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
 | Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min` |
 | Identidade | `svc_hash` (application ID do service principal: pasta do bundle e `run_as` dos jobs) |
 | Governança | `owner_tag`, `grupo_owner`, `email_alertas` |
@@ -228,7 +228,10 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
 
 ## 6. Controle no Db2
 
-- Driver: **`ibm_db`** (Python, oficial da IBM), instalado pelos notebooks. As threads do despachante
+- **`usar_db2`** (`sim` padrão · `nao`): com `nao`, o motor não executa nenhuma etapa do Db2 (não conecta, não grava
+  CONCLUIDO/ERRO/EM_PROCESSAMENTO e o log não tem `CONFIRMADO_DB2`); a carga, o log no Databricks e o tratamento de
+  erro são os mesmos. As variáveis `db2_*` podem ficar vazias, e o job "testar controle Db2" só avisa.
+- Driver: **`ibm_db`** (Python, oficial da IBM), instalado pelo environment dos jobs. As threads do despachante
   compartilham um pool de no máximo `db2_max_conexoes` conexões (padrão 8); cada job independente usa 1.
   Total no Db2 = pool + jobs independentes em execução: respeite o limite de conexões do Db2 do cliente.
   Medido no teste: conexão em ~0,8 s, ~0,15 s por gravação; 22 objetos em paralelo com 8 conexões, 0 erros.
@@ -261,6 +264,15 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
   `aws s3 cp` (ou o próprio Netezza); `plhdwa_gerar_teste_tempo` também grava no S3 com `landing_tipo = S3`. Esperado: carga na
   tabela destino, `CONCLUIDO` em `v_status_arquivo`, linha `CONCLUIDO` na controle do Db2, arquivos apagados.
 - `plhdwa_validar_testes`: compara um manifesto (resultado esperado por arquivo) com o log e com a controle.
+
+**O CTL chegou e nada aconteceu?**
+- O despachante não rodou: veja a aba **Trigger** do job (caminho vigiado e erro da external location).
+- Rodou e não processou: a mensagem do lote diz o que ele viu na pasta e o motivo de cada CTL ignorado (nome fora do
+  padrão, por exemplo `.ctl` minúsculo; objeto travado; objeto com `ativo = false`; já concluído; pasta vazia ou
+  inexistente):
+  `SELECT status, mensagem FROM <catalogo>.<schema>.log_lote ORDER BY evento_ts DESC LIMIT 4`.
+- A pasta não pôde ser listada (permissão, external location com problema): despachante e vigia terminam com
+  **erro**, e a mensagem do job e do `log_lote` traz o erro real ("não consegui listar ...").
 
 ## 8. Notas de implementação
 

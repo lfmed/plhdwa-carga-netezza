@@ -5,7 +5,7 @@
 # MAGIC 1. Cria/atualiza as tabelas e visões operacionais (inclusive a `ctl_parametros`, cadastro dos objetos) a partir de `sql/01_tabelas_operacionais.sql`,
 # MAGIC    trocando `${catalogo}`, `${schema}`, `${owner_tag}` e as vagas iniciais pelas variáveis do bundle.
 # MAGIC 2. Grava em `ctl_execucao` os jobs independentes de cada tipo (Performance Optimized e Standard).
-# MAGIC 3. Só com `db2_modo = SIMULADO` (testes sem Db2): cria o banco e a tabela da controle no Lakebase.
+# MAGIC 3. Só com `usar_db2 = sim` e `db2_modo = SIMULADO` (testes sem Db2): cria o banco e a tabela da controle no Lakebase.
 # MAGIC    Com `db2_modo = DB2` não usa Lakebase; a conexão com o Db2 é testada pelo job "testar controle Db2".
 # MAGIC 4. Dá ao owner (`grupo_owner`) escrita em `ctl_execucao` e `ctl_parametros` e leitura nas tabelas operacionais.
 # MAGIC 5. Confere a `ctl_parametros` contra as tabelas destino (código duplicado, tabela ou coluna inexistente).
@@ -26,7 +26,7 @@ from databricks.sdk import WorkspaceClient
 
 # Parâmetros (vêm de resources/jobs.yml -> variáveis do bundle)
 NOMES = ["catalogo", "schema", "owner_tag", "max_simult_despachante", "max_simult_job", "job_perf", "job_std",
-         "db2_modo", "lakebase_instance", "lakebase_database", "lakebase_tabela", "grupo_owner"]
+         "usar_db2", "db2_modo", "lakebase_instance", "lakebase_database", "lakebase_tabela", "grupo_owner"]
 for nome in NOMES:
     dbutils.widgets.text(nome, "")
 P = {k: dbutils.widgets.get(k).strip() for k in NOMES}
@@ -70,7 +70,9 @@ display(spark.table(fq("ctl_execucao")))
 # 3) Controle simulada no Lakebase: banco + schema + tabela (estado atual de cada arquivo)
 w = WorkspaceClient()
 usuario = w.current_user.me().user_name
-if P["db2_modo"] == "SIMULADO":
+if P["usar_db2"].lower() == "nao":
+    print("usar_db2 = nao: o motor não executa as etapas do Db2 (nem a controle simulada no Lakebase).")
+elif P["db2_modo"] == "SIMULADO":
     inst = w.database.get_database_instance(name=P["lakebase_instance"])
     token = w.database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[inst.name]).token
     conexao = dict(host=inst.read_write_dns, user=usuario, password=token, ssl_context=ssl.create_default_context())
