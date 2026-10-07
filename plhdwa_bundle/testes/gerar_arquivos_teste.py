@@ -67,7 +67,8 @@ class Gerador:
             self._escrever_dat(dat, tamanho, data_mov, insts_dados, header or self.header, mexer)
         # CTL por último: é ele que dispara o File Arrival.
         with open(ctl, "w", encoding="latin-1", newline="\n") as f:
-            f.write(ctl_conteudo or f"{cod}|{tabela}|{data_mov}|{geracao}|{insts_ctl}\n")
+            d = str(data_mov)                    # formato do CTL desde 08/10/2026: cabeçalho + cod, instituições, data
+            f.write(ctl_conteudo or f"Cd_obj, cd_inst, dt_mov\n{cod}, {insts_ctl}, {d[:4]}-{d[4:6]}-{d[6:]}\n")
         self.manifesto.append({"cenario": cenario, "cod_objeto": cod, "arquivo_ctl": base + ".CTL",
                                "tamanho_bytes": os.path.getsize(dat) if gerar_dat else 0,
                                "fila_esperada": fila_esperada, "resultado_esperado": resultado_esperado})

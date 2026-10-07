@@ -914,26 +914,64 @@ def limpar_tmp_orfaos():
 # =============================================================================
 # 6. Validações (CTL, sequência, pré-checagem) e detector de formato
 # =============================================================================
+def ler_conteudo_ctl(texto, arq):
+    """Lê o conteúdo do CTL, confere com o nome do arquivo e devolve as instituições ("0" = todas, ou "1,2,3").
+    Formato novo (vírgulas), com cabeçalho opcional:
+        Cd_obj, cd_inst, dt_mov
+        1230, 1,2,3, 2026-09-01
+      1º valor = código do objeto · último = data de movimento (yyyy-MM-dd) · tudo o que está entre a 1ª e a última
+      vírgula = instituições (0 = todas; 0 junto com outras, nenhuma, não numérica ou mais de 1 linha de dados = ERRO_CTL).
+    Formato antigo (com '|'), ainda aceito: cod|nome|yyyyMMdd|yyyyMMddHHmmss|instituições."""
+    texto = texto.lstrip("\ufeff").replace("\r", "").strip()
+    if "|" in texto:                                    # formato antigo
+        partes = texto.split("|")
+        if len(partes) != 5:
+            raise ErroCarga("ERRO_CTL", f"CTL com {len(partes)} campos (esperado 5): {texto[:200]}")
+        cod, _tab, dt_mov, dt_ger, insts = (p.strip() for p in partes)
+        if (cod, dt_mov, dt_ger) != (str(arq["cod"]), arq["dt_mov"], arq["dt_ger"]):
+            raise ErroCarga("ERRO_CTL", f"conteúdo ({cod}, {dt_mov}, {dt_ger}) diferente do nome "
+                                        f"({arq['cod']}, {arq['dt_mov']}, {arq['dt_ger']})")
+        for valor, fmt in ((dt_mov, "%Y%m%d"), (dt_ger, "%Y%m%d%H%M%S")):
+            try:
+                time.strptime(valor, fmt)
+            except ValueError:
+                raise ErroCarga("ERRO_CTL", f"data inválida no CTL: {valor}")
+        if insts != "0" and not re.fullmatch(r"\d+(,\d+)*", insts):
+            raise ErroCarga("ERRO_CTL", f"lista de instituições inválida: {insts}")
+        return insts
+    linhas = [l.strip() for l in texto.split("\n") if l.strip()]
+    if linhas and not linhas[0].split(",")[0].strip().isdigit():
+        linhas = linhas[1:]                             # cabeçalho (Cd_obj, cd_inst, dt_mov)
+    if len(linhas) != 1:
+        raise ErroCarga("ERRO_CTL", f"CTL com {len(linhas)} linha(s) de dados (esperado 1): {texto[:200]}")
+    v = [p.strip() for p in linhas[0].split(",")]
+    if len(v) < 3:
+        raise ErroCarga("ERRO_CTL", f"CTL sem instituição (esperado cd_obj, cd_inst..., dt_mov): {linhas[0][:200]}")
+    cod, insts, dt = v[0], v[1:-1], v[-1]
+    try:
+        dt_mov = time.strftime("%Y%m%d", time.strptime(dt, "%Y-%m-%d"))
+    except ValueError:
+        raise ErroCarga("ERRO_CTL", f"data de movimento inválida no CTL: {dt!r} (esperado yyyy-MM-dd)")
+    if not cod.isdigit() or int(cod) != int(arq["cod"]) or dt_mov != arq["dt_mov"]:
+        raise ErroCarga("ERRO_CTL", f"conteúdo (objeto {cod}, data {dt}) diferente do nome "
+                                    f"(objeto {arq['cod']}, data {arq['dt_mov']})")
+    if not all(i.isdigit() for i in insts):
+        raise ErroCarga("ERRO_CTL", f"instituição vazia ou não numérica no CTL: '{', '.join(insts)[:200]}'")
+    lista = list(dict.fromkeys(str(int(i)) for i in insts))   # sem zeros à esquerda e sem repetidas
+    if "0" in lista:
+        if len(lista) > 1:
+            raise ErroCarga("ERRO_CTL", f"instituição 0 (todas) junto com outras: {', '.join(insts)[:200]}")
+        return "0"
+    return ",".join(lista)
+
+
 def validar_ctl(arq, meta_header=True):
     """Conteúdo do CTL x nome do arquivo + DAT presente e não vazio. Devolve (instituições, tamanho do DAT)."""
     try:
-        texto = CTX["dbutils"].fs.head(arq["ctl"]).strip()
+        texto = CTX["dbutils"].fs.head(arq["ctl"])
     except Exception as e:
         raise ErroCarga("ERRO_CTL", f"não consegui ler o CTL: {e}")
-    partes = texto.split("|")
-    if len(partes) != 5:
-        raise ErroCarga("ERRO_CTL", f"CTL com {len(partes)} campos (esperado 5): {texto[:200]}")
-    cod, _tab, dt_mov, dt_ger, insts = (p.strip() for p in partes)
-    if (cod, dt_mov, dt_ger) != (str(arq["cod"]), arq["dt_mov"], arq["dt_ger"]):
-        raise ErroCarga("ERRO_CTL", f"conteúdo ({cod}, {dt_mov}, {dt_ger}) diferente do nome "
-                                    f"({arq['cod']}, {arq['dt_mov']}, {arq['dt_ger']})")
-    for valor, fmt in ((dt_mov, "%Y%m%d"), (dt_ger, "%Y%m%d%H%M%S")):
-        try:
-            time.strptime(valor, fmt)
-        except ValueError:
-            raise ErroCarga("ERRO_CTL", f"data inválida no CTL: {valor}")
-    if insts != "0" and not re.fullmatch(r"\d+(,\d+)*", insts):
-        raise ErroCarga("ERRO_CTL", f"lista de instituições inválida: {insts}")
+    insts = ler_conteudo_ctl(texto, arq)
     try:
         tamanho = resolver_dat(arq)                          # .dat ou .DAT; 1 arquivo: não lista a pasta inteira
     except Exception:

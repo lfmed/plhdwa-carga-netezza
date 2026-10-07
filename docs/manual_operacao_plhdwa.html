@@ -362,6 +362,7 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
   <table>
     <tr><th>Situação</th><th>Como</th></tr>
     <tr><td>Reprocessar uma data (FATO)</td><td>O Netezza reenvia o par com <b>nova data de geração</b>; o REPLACE WHERE substitui só data × instituições do CTL</td></tr>
+    <tr><td>Conferir o conteúdo do CTL</td><td><code>Cd_obj, cd_inst, dt_mov</code> / <code>1230, 1,2,3, 2026-09-01</code>: 1º = objeto, último = data de movimento, o meio = instituições (<code>0</code> = todas). Formato antigo com <code>|</code> também é aceito</td></tr>
     <tr><td>Reprocessar uma DIM</td><td>Reenviar o par: a tabela inteira é substituída</td></tr>
     <tr><td>Desfazer uma carga errada</td><td><code>DESCRIBE HISTORY</code> → versão anterior (coluna <code>userMetadata</code> = nome do CTL) → <code>RESTORE TABLE … TO VERSION AS OF n</code></td></tr>
   </table>

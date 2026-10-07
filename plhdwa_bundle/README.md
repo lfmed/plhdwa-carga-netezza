@@ -131,6 +131,16 @@ por exemplo `57_FINANCEIRO_DIM_BEM_IMOVEL_20260930_20260930155333.CTL`. A carga 
 é o 1º segmento depois do código (sem `_`) e serve só para visualização: coluna `grupo` em `v_status_arquivo`,
 `v_arquivo_concluido`, `v_em_execucao`, `v_objeto_travado` e nos dashboards (com filtro). Nome no padrão antigo, sem
 grupo, continua valendo; nesse caso o 1º segmento do nome aparece como grupo (nome de um segmento só = grupo vazio).
+**Conteúdo do CTL** (separado por vírgula, cabeçalho opcional):
+```
+Cd_obj, cd_inst, dt_mov
+1230, 1,2,3, 2026-09-01
+```
+1º valor = código do objeto · último = data de movimento (`yyyy-MM-dd`) · tudo o que está entre a 1ª e a última
+vírgula = instituições (`0` = todas). Código e data precisam bater com o nome do arquivo. Dão `ERRO_CTL`: sem
+instituição, `0` junto com outras, instituição não numérica, data inválida, mais de uma linha de dados. O formato
+antigo, com `|` (`cod|nome|yyyyMMdd|yyyyMMddHHmmss|instituições`), continua aceito.
+
 Arquivo na pasta de CTL com nome fora desse padrão (ou que não é CTL) vai para `pasta_erro` (com o `.dat` de mesmo
 nome, se houver) depois de `mover_invalido_min` minutos na pasta (padrão 5, para não mexer em arquivo sendo gravado) e
 gera o evento `NOME_INVALIDO` no log (não trava objeto).
