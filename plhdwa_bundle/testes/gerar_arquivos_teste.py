@@ -40,11 +40,13 @@ class Gerador:
             os.makedirs(os.path.join(destino, pasta), exist_ok=True)
 
     # ---------- linhas ----------
-    def linha(self, data_mov=DATA_MOV, inst=None, mexer=None):
-        """Copia uma linha real e troca data de movimento, instituição e chaves (para não ficar tudo igual)."""
+    def linha(self, data_mov=DATA_MOV, inst=None, mexer=None, cpr=None):
+        """Copia uma linha real e troca data de movimento, instituição, nr_cpr e chaves (para não ficar tudo igual)."""
         v = list(random.choice(self.modelos))
         v[self.idx["SK_TMO_MVM"]] = str(data_mov)
         v[self.idx["SK_INS"]] = str(inst or random.choice(INSTITUICOES))
+        if cpr is not None:
+            v[self.idx["NR_CPR"]] = str(cpr)
         v[self.idx["SK_CLI"]] = str(random.randint(500_000_000, 599_999_999))
         v[self.idx["NR_CON_CRD"]] = str(random.randint(1_000_000, 9_999_999))
         if mexer:
@@ -58,28 +60,29 @@ class Gerador:
     # ---------- arquivos ----------
     def par(self, cod, cenario, fila_esperada, resultado_esperado, tamanho=TAMANHO["P"], data_mov=DATA_MOV,
             insts_ctl="0", insts_dados=None, header=None, mexer=None, gerar_dat=True, ctl_conteudo=None,
-            geracao=None, tabela="FATPARCELA"):
+            geracao=None, tabela="FATPARCELA", cprs_ctl="0", cprs_dados=None):
         geracao = geracao or self.proxima_geracao()
         base = f"{cod}_{tabela}_{data_mov}_{geracao}"
         dat = os.path.join(self.destino, "raw/data", base + ".dat")
         ctl = os.path.join(self.destino, "raw/ctl", base + ".CTL")
         if gerar_dat:
-            self._escrever_dat(dat, tamanho, data_mov, insts_dados, header or self.header, mexer)
+            self._escrever_dat(dat, tamanho, data_mov, insts_dados, header or self.header, mexer, cprs_dados)
         # CTL por último: é ele que dispara o File Arrival.
         with open(ctl, "w", encoding="latin-1", newline="\n") as f:
-            d = str(data_mov)                    # formato do CTL desde 08/10/2026: cabeçalho + cod, instituições, data
-            f.write(ctl_conteudo or f"Cd_obj, cd_inst, dt_mov\n{cod}, {insts_ctl}, {d[:4]}-{d[4:6]}-{d[6:]}\n")
+            d = str(data_mov)                    # formato do CTL desde 13/10/2026: cod|instituições|nr_cpr|data
+            f.write(ctl_conteudo or f"Cd_obj|cd_inst|nr_cpr|dt_mov\n{cod}|{insts_ctl}|{cprs_ctl}|{d[:4]}-{d[4:6]}-{d[6:]}\n")
         self.manifesto.append({"cenario": cenario, "cod_objeto": cod, "arquivo_ctl": base + ".CTL",
                                "tamanho_bytes": os.path.getsize(dat) if gerar_dat else 0,
                                "fila_esperada": fila_esperada, "resultado_esperado": resultado_esperado})
         return base
 
-    def _escrever_dat(self, caminho, tamanho, data_mov, insts, header, mexer):
+    def _escrever_dat(self, caminho, tamanho, data_mov, insts, header, mexer, cprs=None):
         """Escreve até atingir o tamanho. Para arquivos grandes, repete um bloco pronto (rápido)."""
         with open(caminho, "w", encoding="latin-1", newline="\n") as f:
             f.write(header + "\n")
             escrito = len(header) + 1
-            nova = lambda: self.linha(data_mov, random.choice(insts) if insts else None, mexer) + "\n"
+            nova = lambda: self.linha(data_mov, random.choice(insts) if insts else None, mexer,
+                                      random.choice(cprs) if cprs else None) + "\n"
             if tamanho < 8 * MB:                       # pequeno: linha a linha, para respeitar o tamanho
                 while escrito < tamanho:
                     l = nova()
@@ -125,10 +128,10 @@ def ordem(g):
 
 
 def reprocessamento(g):
-    """Mesmo movimento duas vezes: a 2ª só com 2 instituições -> REPLACE WHERE troca só essas duas."""
-    g.par(9041, "reprocessamento", "P", "CONCLUIDO", TAMANHO["P"], insts_ctl="0")
-    g.par(9041, "reprocessamento", "P", "CONCLUIDO", TAMANHO["P"], insts_ctl="501204,501207",
-          insts_dados=[501204, 501207])
+    """Mesmo movimento duas vezes: a 2ª só com 2 nr_cpr -> REPLACE WHERE troca só esses dois."""
+    g.par(9041, "reprocessamento", "P", "CONCLUIDO", TAMANHO["P"], cprs_dados=[3036, 3037, 3038])
+    g.par(9041, "reprocessamento", "P", "CONCLUIDO", TAMANHO["P"], insts_ctl="501204", cprs_ctl="3036,3037",
+          cprs_dados=[3036, 3037])
 
 
 def tempo(g, tamanho_mb, cod=9050):
@@ -147,12 +150,13 @@ def erros(g):
     g.par(9102, "erros", "P", "ERRO_DADOS", mexer=letra_em_inteiro)
     g.par(9103, "erros", "P", "ERRO_DADOS", ctl_conteudo=None, data_mov=20250111,
           mexer=lambda v, i: v.__setitem__(i["SK_TMO_MVM"], "20250110"))      # dados de 10/01, CTL de 11/01
-    g.par(9104, "erros", "P", "ERRO_DADOS", insts_ctl="501204", insts_dados=[501204, 501208])
+    g.par(9104, "erros", "P", "ERRO_DADOS", cprs_ctl="3036", cprs_dados=[3036, 3037])     # nr_cpr fora do CTL
     g.par(9105, "erros", "P", "ERRO_PAR", gerar_dat=False)
-    g.par(9106, "erros", "P", "ERRO_CTL", ctl_conteudo="9999|FATPARCELA|20250110|20200101000000|0\n")
+    g.par(9106, "erros", "P", "ERRO_CTL", ctl_conteudo="9999|0|0|2025-01-10\n")          # código diferente do nome
     g.par(9107, "erros", "P", "ERRO_DADOS", mexer=campo_a_menos)
     g.par(9108, "erros", "P", "ERRO_DADOS", mexer=pipe_no_texto)
-    g.par(9110, "erros", "P", "ERRO_CTL", insts_ctl="501204", tabela="DIMTESTE")   # DIM com lista
+    g.par(9110, "erros", "P", "ERRO_CTL", tabela="DIMTESTE",
+          ctl_conteudo="9110|0|2025-01-10\n")                                      # CTL de 3 campos
     g.par(9199, "erros", "P", "ERRO_CADASTRO")                                     # código sem tabela
 
 

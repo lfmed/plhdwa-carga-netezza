@@ -47,9 +47,10 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.ctl_parametros (
   catalogo_destino  STRING  NOT NULL COMMENT 'catálogo da tabela destino',
   schema_destino    STRING  NOT NULL COMMENT 'schema da tabela destino',
   tabela_destino    STRING  NOT NULL COMMENT 'tabela destino (o layout, colunas e tipos, vem dela)',
-  tipo_carga        STRING  NOT NULL COMMENT 'FATO = REPLACE WHERE data de movimento (+ instituições) · DIM = substitui a tabela',
+  tipo_carga        STRING  NOT NULL COMMENT 'FATO = REPLACE WHERE data de movimento (+ nr_cpr do CTL) · DIM = substitui a tabela',
   col_data_mov      STRING           COMMENT 'FATO: coluna da data de movimento (REPLACE WHERE)',
-  col_instituicao   STRING           COMMENT 'FATO: coluna da instituição (REPLACE WHERE, se o CTL trouxer lista)',
+  col_instituicao   STRING           COMMENT 'informativo: a instituição do CTL vai só para a controle (Db2)',
+  col_cpr           STRING           COMMENT 'FATO: coluna do nr_cpr do CTL (REPLACE WHERE, se o CTL trouxer lista; NULL = NR_CPR)',
   execucao          STRING  NOT NULL DEFAULT 'DESPACHANTE' COMMENT 'DESPACHANTE (thread no despachante) | JOB (job independente)',
   tipo_job          STRING  NOT NULL DEFAULT 'PERFORMANCE_OPTIMIZED' COMMENT 'modo JOB: PERFORMANCE_OPTIMIZED | STANDARD',
   ativo             BOOLEAN NOT NULL DEFAULT true COMMENT 'false = os arquivos do objeto ficam parados na pasta de CTL',
@@ -76,7 +77,7 @@ ALTER TABLE ${catalogo}.${schema}.ctl_parametros SET TAGS ('OWNER' = '${owner_ta
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_carga;
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_tipo_carga CHECK (tipo_carga IN ('FATO', 'DIM'));
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_fato_colunas;
-ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_fato_colunas CHECK (tipo_carga = 'DIM' OR (coalesce(col_data_mov, '') <> '' AND coalesce(col_instituicao, '') <> ''));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_fato_colunas CHECK (tipo_carga = 'DIM' OR coalesce(col_data_mov, '') <> '');
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_execucao;
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_execucao CHECK (execucao IN ('DESPACHANTE', 'JOB'));
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_job;
@@ -98,7 +99,8 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_carga_evento (
   tamanho_bytes    BIGINT,
   data_referencia  INT       COMMENT 'data de movimento como no arquivo (yyyyMMdd)',
   data_geracao     TIMESTAMP COMMENT 'do nome do arquivo, no fuso do parâmetro fuso_horario',
-  instituicoes     STRING    COMMENT '"0" = todas, ou lista separada por vírgula',
+  instituicoes     STRING    COMMENT 'cd_inst do CTL (vai para a controle): "0" = todas, ou lista separada por vírgula',
+  nr_cpr           STRING    COMMENT 'nr_cpr do CTL (REPLACE WHERE da FATO): "0" = todos, ou lista separada por vírgula',
   status           STRING    COMMENT 'ROTEADO | INICIADO | CARREGADO | CONFIRMADO_DB2 | CONCLUIDO | ERRO_* | ALERTA_FORMATO | DESBLOQUEIO',
   inicio           TIMESTAMP COMMENT 'início do processamento do arquivo',
   fim              TIMESTAMP COMMENT 'fim do processamento do arquivo',

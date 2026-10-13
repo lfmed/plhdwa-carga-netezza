@@ -50,6 +50,14 @@ sobrou = set(re.findall(r"\$\{(\w+)\}", texto))
 if sobrou:
     raise ValueError(f"marcadores sem valor no SQL: {sobrou}")
 
+# Colunas novas em tabelas que já existem (CREATE TABLE IF NOT EXISTS não altera tabela existente). Antes do SQL,
+# porque as visões e os CHECK podem usar as colunas novas.
+for tabela, coluna, depois in (("ctl_parametros", "col_cpr STRING", "col_instituicao"),
+                               ("log_carga_evento", "nr_cpr STRING", "instituicoes")):
+    if spark.catalog.tableExists(fq(tabela)) and coluna.split()[0] not in [c.lower() for c in spark.table(fq(tabela)).columns]:
+        spark.sql(f"ALTER TABLE {fq(tabela)} ADD COLUMNS ({coluna} AFTER {depois})")
+        print(f"coluna nova: {tabela}.{coluna.split()[0]}")
+
 # Um comando por ";" no fim da linha. Linhas só de comentário são descartadas.
 comandos = [c.strip() for c in re.split(r";\s*\n", texto)]
 comandos = ["\n".join(l for l in c.splitlines() if not l.strip().startswith("--")).strip() for c in comandos]
@@ -148,8 +156,8 @@ for r in linhas:
     except Exception:
         problemas.append((r.cod_objeto, destino, "tabela destino não encontrada"))
         continue
-    for nome in ("col_data_mov", "col_instituicao"):
-        v = getattr(r, nome) or ""
+    for nome, padrao in (("col_data_mov", ""), ("col_cpr", "NR_CPR")):
+        v = getattr(r, nome) or padrao
         if r.tipo_carga == "FATO" and v.lower() not in colunas:
             problemas.append((r.cod_objeto, destino, f"{nome} = {v!r} não é coluna da tabela"))
 print(f"ctl_parametros: {len(linhas)} objeto(s), {len(problemas)} problema(s)")

@@ -4,8 +4,8 @@
 #   ./cadastrar_em_lote.sh <objetos.csv> <pasta_das_ddls> <catalogo> <schema> <catalogo_plhdwa> <schema_plhdwa> [warehouse_id]
 # <catalogo>/<schema> = onde ficam as tabelas destino · <catalogo_plhdwa>/<schema_plhdwa> = variáveis catalogo e
 # schema do bundle (onde está a ctl_parametros)
-# objetos.csv (com cabeçalho): cod;ddl;tabela;tipo;col_data;col_inst[;execucao;tipo_job]
-#   col_data/col_inst vazios para DIM · execucao = DESPACHANTE (padrão) | JOB · tipo_job = PERFORMANCE_OPTIMIZED | STANDARD
+# objetos.csv (com cabeçalho): cod;ddl;tabela;tipo;col_data;col_cpr[;execucao;tipo_job]
+#   col_data/col_cpr vazios para DIM (col_cpr vazio na FATO = NR_CPR) · execucao = DESPACHANTE (padrão) | JOB · tipo_job = PERFORMANCE_OPTIMIZED | STANDARD
 # Sem warehouse_id, só gera os SQLs em ferramentas/cadastro/ (para revisar antes de criar).
 # Exemplo: ./cadastrar_em_lote.sh exemplos/objetos.csv exemplos <catalogo_destino> <schema_destino> <catalogo_plhdwa> plhdwa <warehouse_id>
 set -euo pipefail
@@ -14,10 +14,10 @@ CAT_C=${5:?catalogo_plhdwa}; SCH_C=${6:?schema_plhdwa}; WH=${7:-}
 AQUI=$(cd "$(dirname "$0")" && pwd)
 SAIDA="$AQUI/cadastro"; mkdir -p "$SAIDA"
 
-tail -n +2 "$CSV" | while IFS=';' read -r cod ddl tab tipo cdata cinst execucao tipo_job; do
+tail -n +2 "$CSV" | while IFS=';' read -r cod ddl tab tipo cdata ccpr execucao tipo_job; do
   [ -z "$cod" ] && continue
   extra=(--execucao "${execucao:-DESPACHANTE}" --tipo-job "${tipo_job:-PERFORMANCE_OPTIMIZED}")
-  [ "$tipo" = "FATO" ] && extra+=(--col-data-mov "$cdata" --col-instituicao "$cinst")
+  [ "$tipo" = "FATO" ] && extra+=(--col-data-mov "$cdata" --col-cpr "${ccpr:-NR_CPR}")
   python3 "$AQUI/converter_ddl_netezza.py" "$DDLS/$ddl" --catalogo "$CAT" --schema "$SCH" \
           --tabela "$tab" --catalogo-controle "$CAT_C" --schema-controle "$SCH_C" --cod-objeto "$cod" --tipo-carga "$tipo" "${extra[@]}" > "$SAIDA/${cod}_${tab}.sql"
   echo "gerado: cadastro/${cod}_${tab}.sql"

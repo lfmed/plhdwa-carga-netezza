@@ -145,7 +145,7 @@ resources:
     plhdwa_carga_arquivo_std:
       name: PLHDWA · carga arquivo · standard
       tags: {OWNER: "${var.owner_tag}"}
-      performance_target: STANDARD
+      performance_target: ${var.desempenho_job_std}
       max_concurrent_runs: 100
       queue: {enabled: true}
       email_notifications:
@@ -166,7 +166,7 @@ resources:
     plhdwa_vigia:
       name: PLHDWA · vigia
       tags: {OWNER: "${var.owner_tag}"}
-      performance_target: STANDARD
+      performance_target: ${var.desempenho_vigia}
       max_concurrent_runs: 1
       schedule:
         quartz_cron_expression: "${var.vigia_cron}"
@@ -205,6 +205,7 @@ resources:
     plhdwa_pos_deploy:
       name: PLHDWA · instalação e pós-deploy
       tags: {OWNER: "${var.owner_tag}"}
+      performance_target: PERFORMANCE_OPTIMIZED
       environments: *ambiente_plhdwa
       tasks:
         - task_key: pos_deploy
@@ -232,6 +233,7 @@ resources:
     plhdwa_validar_testes:
       name: PLHDWA · validar testes
       tags: {OWNER: "${var.owner_tag}"}
+      performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: manifesto, default: "${var.landing}/testes/manifesto_todos.csv"}
         - {name: owner_tag, default: "${var.owner_tag}"}
@@ -274,6 +276,7 @@ resources:
     plhdwa_testar_controle_db2:
       name: PLHDWA · testar controle Db2
       tags: {OWNER: "${var.owner_tag}"}
+      performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: criar_tabela, default: "false"}   # true = cria db2_tabela com sql/02_db2_controle_ddl.sql
         - {name: gravar_teste, default: "true"}    # grava 2 arquivos fictícios (objeto 0) com o comando do motor
@@ -314,6 +317,7 @@ resources:
     plhdwa_gerar_teste_tempo:
       name: PLHDWA · gerar arquivo grande (teste de tempo)
       tags: {OWNER: "${var.owner_tag}"}
+      performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: landing, default: "${var.landing}"}
         - {name: pasta_dat, default: "${var.pasta_dat}"}

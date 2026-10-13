@@ -112,7 +112,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 |---|---|
 | Onde ficam as coisas | `catalogo`, `schema`, `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
 | Controle (Db2) | `usar_db2` (`sim` · `nao` = não executa nenhuma etapa do Db2), `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
-| Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min` |
+| Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min`, `vigia_retry_espera_s`, `mover_invalido_min`, `desempenho_vigia` e `desempenho_job_std` (serverless `STANDARD`, padrão, ou `PERFORMANCE_OPTIMIZED`) |
 | Identidade | `svc_hash` (application ID do service principal: pasta do bundle e `run_as` dos jobs) |
 | Governança | `owner_tag`, `grupo_owner`, `email_alertas` |
 | Só no modo SIMULADO | `lakebase_instance`, `lakebase_database`, `lakebase_tabela` |
@@ -131,15 +131,18 @@ por exemplo `57_FINANCEIRO_DIM_BEM_IMOVEL_20260930_20260930155333.CTL`. A carga 
 é o 1º segmento depois do código (sem `_`) e serve só para visualização: coluna `grupo` em `v_status_arquivo`,
 `v_arquivo_concluido`, `v_em_execucao`, `v_objeto_travado` e nos dashboards (com filtro). Nome no padrão antigo, sem
 grupo, continua valendo; nesse caso o 1º segmento do nome aparece como grupo (nome de um segmento só = grupo vazio).
-**Conteúdo do CTL** (separado por vírgula, cabeçalho opcional):
+**Conteúdo do CTL** (4 campos separados por `|`, listas separadas por vírgula, cabeçalho opcional):
 ```
-Cd_obj, cd_inst, dt_mov
-1230, 1,2,3, 2026-09-01
+Cd_obj|cd_inst|nr_cpr|dt_mov
+1230|1,2,3|202609|2026-09-01
 ```
-1º valor = código do objeto · último = data de movimento (`yyyy-MM-dd`) · tudo o que está entre a 1ª e a última
-vírgula = instituições (`0` = todas). Código e data precisam bater com o nome do arquivo. Dão `ERRO_CTL`: sem
-instituição, `0` junto com outras, instituição não numérica, data inválida, mais de uma linha de dados. O formato
-antigo, com `|` (`cod|nome|yyyyMMdd|yyyyMMddHHmmss|instituições`), continua aceito.
+1º campo = código do objeto · 2º = instituições (`0` = todas) · 3º = nr_cpr (`0` = todos) · 4º = data de movimento
+(`yyyy-MM-dd`). **O `nr_cpr` filtra o REPLACE WHERE da FATO** (`col_data_mov = data AND col_cpr IN (nr_cpr)`; com
+`0`, a data inteira); **o `cd_inst` vai só para a controle (Db2)**. Na DIM o `nr_cpr` é ignorado (a tabela inteira é
+substituída). Código e data precisam bater com o nome do arquivo. Dão `ERRO_CTL`: número de campos diferente de 4
+(os formatos anteriores, com 3 ou 5 campos ou só com vírgulas, não valem mais), lista vazia, não numérica ou com `0`
+junto com outros, data inválida, mais de uma linha de dados. Linha do DAT com `nr_cpr` fora da lista do CTL =
+`ERRO_DADOS` (nada é gravado).
 
 Arquivo na pasta de CTL com nome fora desse padrão (ou que não é CTL) vai para `pasta_erro` (com o `.dat` de mesmo
 nome, se houver) depois de `mover_invalido_min` minutos na pasta (padrão 5, para não mexer em arquivo sendo gravado) e
@@ -153,7 +156,7 @@ layout: colunas, ordem e tipos.
 |---|---|---|
 | Chave | `cod_objeto` (código do CTL; 1 linha por código) | obrigatório |
 | Destino | `catalogo_destino`, `schema_destino`, `tabela_destino` | obrigatório |
-| Carga | `tipo_carga` (`FATO` = REPLACE WHERE data de movimento + instituições do CTL · `DIM` = substitui a tabela), `col_data_mov`, `col_instituicao` | FATO exige as duas colunas |
+| Carga | `tipo_carga` (`FATO` = REPLACE WHERE data de movimento + nr_cpr do CTL · `DIM` = substitui a tabela), `col_data_mov`, `col_cpr` (coluna do nr_cpr), `col_instituicao` (informativo) | FATO exige `col_data_mov`; `col_cpr` vazia = `NR_CPR` |
 | Execução | `execucao` (`DESPACHANTE` · `JOB`), `tipo_job` (`PERFORMANCE_OPTIMIZED` · `STANDARD`), `ativo` | `DESPACHANTE`, `PERFORMANCE_OPTIMIZED`, `true` |
 | Formato do arquivo | `delimitador`, `encoding`, `header`, `escape`, `quote`, `null_value`, `date_format`, `timestamp_format` | `\|`, `ISO-8859-15`, `true`, sem, sem, vazio, `yyyy-MM-dd`, `yyyy-MM-dd HH:mm[:ss]` |
 | Limpeza (5b) | `limpeza`, `limpeza_modo`, `limpeza_quote` | variável `limpeza_dat`, `CLIENTE`, `'` |
@@ -176,10 +179,10 @@ cd ferramentas
 # 1 objeto
 python3 converter_ddl_netezza.py exemplos/ddl_external_dwa_ccr_fatparcela.sql --catalogo <cat> --schema <sch> \
         --tabela fat_parcela --catalogo-controle <catalogo> --schema-controle <schema> \
-        --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
+        --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-cpr NR_CPR \
         > cadastro/1230_fat_parcela.sql
 python3 executar_sql.py cadastro/1230_fat_parcela.sql --warehouse <warehouse_id>
-# vários objetos (csv: cod;ddl;tabela;tipo;col_data;col_inst;execucao;tipo_job)
+# vários objetos (csv: cod;ddl;tabela;tipo;col_data;col_cpr;execucao;tipo_job)
 ./cadastrar_em_lote.sh exemplos/objetos.csv <pasta_das_ddls> <cat> <sch> <catalogo> <schema> [warehouse_id]
 ```
 `<catalogo>`/`<schema>` = variáveis `catalogo` e `schema` do bundle (onde está a `ctl_parametros`).
@@ -187,7 +190,7 @@ python3 executar_sql.py cadastro/1230_fat_parcela.sql --warehouse <warehouse_id>
 Conferir o cadastro:
 ```sql
 SELECT cod_objeto, concat_ws('.', catalogo_destino, schema_destino, tabela_destino) AS destino, tipo_carga,
-       col_data_mov, col_instituicao, execucao, tipo_job, ativo
+       col_data_mov, col_cpr, execucao, tipo_job, ativo
 FROM <catalogo>.<schema>.ctl_parametros ORDER BY cod_objeto;
 ```
 

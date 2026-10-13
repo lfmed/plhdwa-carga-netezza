@@ -197,7 +197,7 @@ def sql(texto, **args):
 # =============================================================================
 _SCHEMA_EVENTO = ("ts_s DOUBLE, job_id BIGINT, job_run_id BIGINT, lote_id BIGINT, fila STRING, tipo_job STRING, cod_objeto INT, "
                   "tabela_destino STRING, arquivo_ctl STRING, arquivo_dat STRING, tamanho_bytes BIGINT, "
-                  "data_referencia INT, dg STRING, instituicoes STRING, status STRING, inicio_s DOUBLE, "
+                  "data_referencia INT, dg STRING, instituicoes STRING, nr_cpr STRING, status STRING, inicio_s DOUBLE, "
                   "fim_s DOUBLE, qtd_inserida BIGINT, qtd_removida BIGINT, versao_delta BIGINT, mensagem STRING")
 
 
@@ -215,6 +215,7 @@ def _linha_evento(arq, status, c):
         "data_referencia": int(arq["dt_mov"]) if arq and arq.get("dt_mov") else None,
         "dg": arq.get("dt_ger") if arq else None,
         "instituicoes": c.get("instituicoes"),
+        "nr_cpr": c.get("nr_cpr"),
         "status": status,
         "inicio_s": c.get("inicio"), "fim_s": c.get("fim"),
         "qtd_inserida": c.get("qtd_inserida"), "qtd_removida": c.get("qtd_removida"),
@@ -232,7 +233,7 @@ def eventos(lista):
     (df.select(F.coalesce(F.timestamp_seconds("ts_s"), F.current_timestamp()).alias("evento_ts"), "job_id",
                "job_run_id", "fila", "tipo_job", "cod_objeto", "tabela_destino", "arquivo_ctl", "arquivo_dat",
                "tamanho_bytes", "data_referencia", F.to_timestamp("dg", "yyyyMMddHHmmss").alias("data_geracao"),
-               "instituicoes", "status", F.timestamp_seconds("inicio_s").alias("inicio"),
+               "instituicoes", "nr_cpr", "status", F.timestamp_seconds("inicio_s").alias("inicio"),
                F.timestamp_seconds("fim_s").alias("fim"), "qtd_inserida", "qtd_removida", "versao_delta", "mensagem",
                F.expr("current_user()").alias("usuario"), "lote_id")
        .write.mode("append").option("mergeSchema", "false").saveAsTable(fq("log_carga_evento")))
@@ -582,13 +583,13 @@ def metadados(cod, validade_s=60):
         raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: tipo_carga {o.get('tipo_carga')!r} (use FATO ou DIM)")
     nomes = {f.name.lower(): f.name for f in schema.fields}
     cols = {}
-    for chave in ("col_data_mov", "col_instituicao"):
-        v = o.get(chave) or ""
+    for chave, padrao in (("col_data_mov", ""), ("col_cpr", "NR_CPR")):   # as colunas do REPLACE WHERE
+        v = o.get(chave) or padrao
         if tipo == "FATO" and v.lower() not in nomes:
             raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: {chave} = {v!r} não é coluna de {t}")
         cols[chave] = nomes.get(v.lower(), v)
     meta = {"tabela": t, "params": o, "schema": schema, "tipo": tipo,
-            "col_data": cols["col_data_mov"], "col_inst": cols["col_instituicao"]}
+            "col_data": cols["col_data_mov"], "col_cpr": cols["col_cpr"]}
     with _trava_cache:
         _cache_meta[cod] = (time.time(), meta)
     return meta
@@ -914,40 +915,37 @@ def limpar_tmp_orfaos():
 # =============================================================================
 # 6. Validações (CTL, sequência, pré-checagem) e detector de formato
 # =============================================================================
+def _lista_ctl(texto, nome):
+    """'1,2,3' -> '1,2,3' (sem zeros à esquerda e sem repetidos) · '0' -> '0' (todos). ERRO_CTL se vazio, não
+    numérico ou 0 junto com outros."""
+    valores = [v.strip() for v in texto.split(",")]
+    if not all(v.isdigit() for v in valores):
+        raise ErroCarga("ERRO_CTL", f"{nome} vazio ou não numérico no CTL: '{texto[:200]}'")
+    lista = list(dict.fromkeys(str(int(v)) for v in valores))
+    if "0" in lista and len(lista) > 1:
+        raise ErroCarga("ERRO_CTL", f"{nome} 0 (todos) junto com outros: '{texto[:200]}'")
+    return ",".join(lista)
+
+
 def ler_conteudo_ctl(texto, arq):
-    """Lê o conteúdo do CTL, confere com o nome do arquivo e devolve as instituições ("0" = todas, ou "1,2,3").
-    Formato novo (vírgulas), com cabeçalho opcional:
-        Cd_obj, cd_inst, dt_mov
-        1230, 1,2,3, 2026-09-01
-      1º valor = código do objeto · último = data de movimento (yyyy-MM-dd) · tudo o que está entre a 1ª e a última
-      vírgula = instituições (0 = todas; 0 junto com outras, nenhuma, não numérica ou mais de 1 linha de dados = ERRO_CTL).
-    Formato antigo (com '|'), ainda aceito: cod|nome|yyyyMMdd|yyyyMMddHHmmss|instituições."""
+    """Lê o conteúdo do CTL, confere com o nome do arquivo e devolve (instituições, nr_cpr), cada um "0" (todos)
+    ou uma lista "1,2,3". Formato (4 campos separados por '|', listas separadas por vírgula, cabeçalho opcional):
+        Cd_obj|cd_inst|nr_cpr|dt_mov
+        1230|1,2,3|202609|2026-09-01
+    cd_inst vai só para a controle (Db2); nr_cpr filtra o REPLACE WHERE da FATO. Data de movimento yyyy-MM-dd.
+    ERRO_CTL: outro número de campos (os formatos anteriores não valem mais), mais de 1 linha de dados, lista vazia,
+    não numérica ou com 0 junto com outros, código ou data diferentes do nome."""
     texto = texto.lstrip("\ufeff").replace("\r", "").strip()
-    if "|" in texto:                                    # formato antigo
-        partes = texto.split("|")
-        if len(partes) != 5:
-            raise ErroCarga("ERRO_CTL", f"CTL com {len(partes)} campos (esperado 5): {texto[:200]}")
-        cod, _tab, dt_mov, dt_ger, insts = (p.strip() for p in partes)
-        if (cod, dt_mov, dt_ger) != (str(arq["cod"]), arq["dt_mov"], arq["dt_ger"]):
-            raise ErroCarga("ERRO_CTL", f"conteúdo ({cod}, {dt_mov}, {dt_ger}) diferente do nome "
-                                        f"({arq['cod']}, {arq['dt_mov']}, {arq['dt_ger']})")
-        for valor, fmt in ((dt_mov, "%Y%m%d"), (dt_ger, "%Y%m%d%H%M%S")):
-            try:
-                time.strptime(valor, fmt)
-            except ValueError:
-                raise ErroCarga("ERRO_CTL", f"data inválida no CTL: {valor}")
-        if insts != "0" and not re.fullmatch(r"\d+(,\d+)*", insts):
-            raise ErroCarga("ERRO_CTL", f"lista de instituições inválida: {insts}")
-        return insts
     linhas = [l.strip() for l in texto.split("\n") if l.strip()]
-    if linhas and not linhas[0].split(",")[0].strip().isdigit():
-        linhas = linhas[1:]                             # cabeçalho (Cd_obj, cd_inst, dt_mov)
+    if linhas and not linhas[0].split("|")[0].strip().isdigit():
+        linhas = linhas[1:]                             # cabeçalho (Cd_obj|cd_inst|nr_cpr|dt_mov)
     if len(linhas) != 1:
         raise ErroCarga("ERRO_CTL", f"CTL com {len(linhas)} linha(s) de dados (esperado 1): {texto[:200]}")
-    v = [p.strip() for p in linhas[0].split(",")]
-    if len(v) < 3:
-        raise ErroCarga("ERRO_CTL", f"CTL sem instituição (esperado cd_obj, cd_inst..., dt_mov): {linhas[0][:200]}")
-    cod, insts, dt = v[0], v[1:-1], v[-1]
+    partes = [p.strip() for p in linhas[0].split("|")]
+    if len(partes) != 4:
+        raise ErroCarga("ERRO_CTL", f"CTL com {len(partes)} campo(s) separados por '|' "
+                                    f"(esperado 4: cd_obj|cd_inst|nr_cpr|dt_mov): {linhas[0][:200]}")
+    cod, insts, cprs, dt = partes
     try:
         dt_mov = time.strftime("%Y%m%d", time.strptime(dt, "%Y-%m-%d"))
     except ValueError:
@@ -955,23 +953,16 @@ def ler_conteudo_ctl(texto, arq):
     if not cod.isdigit() or int(cod) != int(arq["cod"]) or dt_mov != arq["dt_mov"]:
         raise ErroCarga("ERRO_CTL", f"conteúdo (objeto {cod}, data {dt}) diferente do nome "
                                     f"(objeto {arq['cod']}, data {arq['dt_mov']})")
-    if not all(i.isdigit() for i in insts):
-        raise ErroCarga("ERRO_CTL", f"instituição vazia ou não numérica no CTL: '{', '.join(insts)[:200]}'")
-    lista = list(dict.fromkeys(str(int(i)) for i in insts))   # sem zeros à esquerda e sem repetidas
-    if "0" in lista:
-        if len(lista) > 1:
-            raise ErroCarga("ERRO_CTL", f"instituição 0 (todas) junto com outras: {', '.join(insts)[:200]}")
-        return "0"
-    return ",".join(lista)
+    return _lista_ctl(insts, "cd_inst"), _lista_ctl(cprs, "nr_cpr")
 
 
 def validar_ctl(arq, meta_header=True):
-    """Conteúdo do CTL x nome do arquivo + DAT presente e não vazio. Devolve (instituições, tamanho do DAT)."""
+    """Conteúdo do CTL x nome do arquivo + DAT presente e não vazio. Devolve (instituições, nr_cpr, tamanho do DAT)."""
     try:
         texto = CTX["dbutils"].fs.head(arq["ctl"])
     except Exception as e:
         raise ErroCarga("ERRO_CTL", f"não consegui ler o CTL: {e}")
-    insts = ler_conteudo_ctl(texto, arq)
+    insts, cprs = ler_conteudo_ctl(texto, arq)
     try:
         tamanho = resolver_dat(arq)                          # .dat ou .DAT; 1 arquivo: não lista a pasta inteira
     except Exception:
@@ -986,7 +977,7 @@ def validar_ctl(arq, meta_header=True):
     if len(linhas) < (2 if meta_header else 1):
         raise ErroCarga("ERRO_DAT_VAZIO", f"DAT {arq['nome_dat']} sem registros (só o header)" if linhas
                         else f"DAT {arq['nome_dat']} em branco")
-    return insts, tamanho
+    return insts, cprs, tamanho
 
 
 def info_arquivo(arq):
@@ -999,8 +990,8 @@ def info_arquivo(arq):
     return (r.qtd, bool(r.carregado), r.ultima) if r else (None, False, None)
 
 
-def validacoes_fato(df, meta, arq, insts):
-    """Data de movimento = CTL e instituição na lista. Violação aborta a leitura (antes do commit)."""
+def validacoes_fato(df, meta, arq, cprs):
+    """Data de movimento = CTL e nr_cpr na lista do CTL. Violação aborta a leitura (antes do commit)."""
     if meta["tipo"] != "FATO":
         return df
     col_d = F.col(meta["col_data"])
@@ -1009,18 +1000,19 @@ def validacoes_fato(df, meta, arq, insts):
             else F.lit(arq["dt_mov"]).cast(tipo_d))
     regra = F.when(col_d != alvo, F.raise_error(F.concat(
         F.lit(f"ERRO_DADOS: {meta['col_data']} = "), col_d.cast("string"), F.lit(f" diferente do CTL ({arq['dt_mov']})"))))
-    if insts != "0":
-        lista = [int(x) for x in insts.split(",")]
-        col_i = F.col(meta["col_inst"])
-        regra = regra.when(~col_i.isin(lista), F.raise_error(F.concat(
-            F.lit(f"ERRO_DADOS: {meta['col_inst']} = "), col_i.cast("string"), F.lit(f" fora da lista do CTL ({insts})"))))
+    if cprs != "0":
+        lista = [int(x) for x in cprs.split(",")]
+        col_c = F.col(meta["col_cpr"])
+        regra = regra.when(col_c.isNull() | ~col_c.cast("bigint").isin(lista), F.raise_error(F.concat(
+            F.lit(f"ERRO_DADOS: {meta['col_cpr']} = "), F.coalesce(col_c.cast("string"), F.lit("NULL")),
+            F.lit(f" fora da lista nr_cpr do CTL ({cprs})"))))
     return df.filter(regra.otherwise(F.lit(True)))
 
 
 _detector_feito = set()
 
 
-def precheck(arq, meta, insts, tamanho, linhas=None):
+def precheck(arq, meta, cprs, tamanho, linhas=None):
     """Header x schema (sempre, é barato). A amostra (parâmetro precheck_linhas) + detector de formato custa uma
     leitura extra: roda em arquivos a partir de precheck_min_mb (erra cedo) e, nos menores, só no 1º arquivo de
     cada objeto por execução (nos pequenos a própria carga já valida tudo em FAILFAST, na mesma leitura)."""
@@ -1040,7 +1032,7 @@ def precheck(arq, meta, insts, tamanho, linhas=None):
         _detector_feito.add(arq["cod"])
     if tamanho < limite and not primeiro:
         return
-    amostra = validacoes_fato(ler_dat(arq, meta).limit(linhas), meta, arq, insts)
+    amostra = validacoes_fato(ler_dat(arq, meta).limit(linhas), meta, arq, cprs)
     textos = [f.name for f in meta["schema"].fields if isinstance(f.dataType, T.StringType)]
     try:
         aggs = [F.count(F.lit(1)).alias("_linhas")]
@@ -1116,19 +1108,21 @@ def classificar(e):
 # =============================================================================
 # 7. Carga atômica
 # =============================================================================
-def carregar(arq, meta, insts):
-    """FATO: REPLACE WHERE data (+ instituições). DIM: substitui tudo. Um único commit Delta."""
+def carregar(arq, meta, cprs):
+    """FATO: REPLACE WHERE data (+ nr_cpr do CTL). DIM: substitui tudo. Um único commit Delta."""
     t = meta["tabela"]
     if meta["tipo"] == "FATO":
         tipo_d = meta["schema"][meta["col_data"]].dataType
         valor = f"DATE'{arq['dt_mov'][:4]}-{arq['dt_mov'][4:6]}-{arq['dt_mov'][6:]}'" \
             if isinstance(tipo_d, T.DateType) else (f"'{arq['dt_mov']}'" if isinstance(tipo_d, T.StringType) else arq["dt_mov"])
         predicado = f"{meta['col_data']} = {valor}"
-        if insts != "0":
-            predicado += f" AND {meta['col_inst']} IN ({insts})"
+        if cprs != "0":
+            tipo_c = meta["schema"][meta["col_cpr"]].dataType
+            col_c = meta["col_cpr"] if isinstance(tipo_c, T.NumericType) else f"CAST({meta['col_cpr']} AS BIGINT)"
+            predicado += f" AND {col_c} IN ({cprs})"
     else:
         predicado = "1 = 1"     # DIM: substitui a tabela inteira, mantendo tags, propriedades e grants
-    df = validacoes_fato(ler_dat(arq, meta), meta, arq, insts)
+    df = validacoes_fato(ler_dat(arq, meta), meta, arq, cprs)
     try:
         (df.write.format("delta").mode("overwrite").option("replaceWhere", predicado)
            .option("userMetadata", arq["nome_ctl"]).saveAsTable(t))
@@ -1401,7 +1395,7 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
     Lança ErroCarga em caso de erro (o objeto fica travado).
     roteado_ts: no despachante o ROTEADO não é gravado na hora; vai junto com o INICIADO (menos gravações)."""
     inicio = time.time()
-    tamanho, meta, insts = None, None, None
+    tamanho, meta, insts, cprs = None, None, None, None
     pend = []                                           # eventos deste arquivo ainda não gravados
     comum = lambda: {"fila": modo, "tipo_job": tipo_job, "tabela": meta and meta["tabela"], "tamanho": tamanho}
     if roteado_ts:
@@ -1409,7 +1403,7 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
     carregou = False
     try:
         meta = metadados(arq["cod"])                    # ERRO_CADASTRO se a ctl_parametros não bate com o destino
-        insts, tamanho = validar_ctl(arq, _p(meta, "header", "true") == "true")
+        insts, cprs, tamanho = validar_ctl(arq, _p(meta, "header", "true") == "true")   # insts: só para a controle
         qtd_anterior, ja_carregado, ultima = info_arquivo(arq)
 
         # 1) controle: este arquivo começou. Só com db2_registrar_inicio = true: aí, sem o início gravado, não
@@ -1429,8 +1423,6 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
             print(f"retomada de {arq['nome_ctl']}: carga já feita, refazendo só a conclusão na controle")
             inseridas, carregou = qtd_anterior or 0, True
         else:
-            if meta["tipo"] == "DIM" and insts != "0":
-                raise ErroCarga("ERRO_CTL", f"DIM não aceita lista de instituições (CTL veio com {insts})")
             if ultima and arq["dt_ger"] <= ultima:
                 raise ErroCarga("ERRO_SEQUENCIA", f"geração {arq['dt_ger']} não é posterior à última carregada {ultima}")
             limpeza = None
@@ -1438,10 +1430,10 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
                 modo_l, t_limpeza, detalhe = preparar_dat(arq, meta)
                 limpeza = (f"limpeza do DAT em {t_limpeza:.1f} s (modo {modo_l}"
                            + (f"; {detalhe}" if detalhe else "") + ")")
-            precheck(arq, meta, insts, tamanho)
-            versao, inseridas, removidas = carregar(arq, meta, insts)
+            precheck(arq, meta, cprs, tamanho)
+            versao, inseridas, removidas = carregar(arq, meta, cprs)
             carregou = True
-            pend.append((arq, "CARREGADO", {**comum(), "instituicoes": insts, "inicio": inicio, "fim": time.time(),
+            pend.append((arq, "CARREGADO", {**comum(), "instituicoes": insts, "nr_cpr": cprs, "inicio": inicio, "fim": time.time(),
                                             "ts": time.time(), "qtd_inserida": inseridas, "qtd_removida": removidas,
                                             "versao": versao, "mensagem": limpeza}))
 

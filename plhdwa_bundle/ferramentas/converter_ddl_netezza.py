@@ -77,7 +77,8 @@ def main():
     p.add_argument("--cod-objeto", required=True)
     p.add_argument("--tipo-carga", choices=["FATO", "DIM"], required=True)
     p.add_argument("--col-data-mov", default="")
-    p.add_argument("--col-instituicao", default="")
+    p.add_argument("--col-instituicao", default="", help="informativo: a instituição do CTL vai só para a controle (Db2)")
+    p.add_argument("--col-cpr", default="NR_CPR", help="FATO: coluna do nr_cpr do CTL (REPLACE WHERE). Padrão NR_CPR")
     p.add_argument("--timestamp-format", default="yyyy-MM-dd HH:mm[:ss]")
     p.add_argument("--date-format", default="yyyy-MM-dd")
     p.add_argument("--owner-tag", default="PLHDWA")
@@ -102,18 +103,21 @@ def main():
     nome_origem = re.search(r"EXTERNAL\s+TABLE\s+([\w.]+)", ddl, re.I).group(1)
     alvo = f"{a.catalogo}.{a.schema}.{a.tabela}"
 
-    if a.tipo_carga == "FATO" and not (a.col_data_mov and a.col_instituicao):
-        sys.exit("FATO exige --col-data-mov e --col-instituicao")
+    if a.tipo_carga == "FATO" and not a.col_data_mov:
+        sys.exit("FATO exige --col-data-mov")
+    if a.tipo_carga == "FATO" and a.col_cpr.lower() not in {c[0].lower() for c in colunas}:
+        sys.exit(f"FATO: a coluna do nr_cpr ({a.col_cpr}) não está na DDL; informe --col-cpr")
 
     largura = max(len(c[0]) for c in colunas)
     defs = ",\n".join(f"  {n.ljust(largura)}  {tipo_delta(t, x)}" for n, t, x in colunas)
-    cluster = f"CLUSTER BY ({a.col_data_mov}, {a.col_instituicao})" if a.tipo_carga == "FATO" else "CLUSTER BY AUTO"
+    cluster = f"CLUSTER BY ({a.col_data_mov}, {a.col_cpr})" if a.tipo_carga == "FATO" else "CLUSTER BY AUTO"
 
     parametros = {   # colunas da ctl_parametros (None = NULL = padrão do motor)
         "cod_objeto": int(a.cod_objeto),
         "catalogo_destino": a.catalogo, "schema_destino": a.schema, "tabela_destino": a.tabela,
         "tipo_carga": a.tipo_carga,
         "col_data_mov": a.col_data_mov or None, "col_instituicao": a.col_instituicao or None,
+        "col_cpr": a.col_cpr if a.tipo_carga == "FATO" else None,
         "execucao": a.execucao, "tipo_job": a.tipo_job, "ativo": True,
         "delimitador": opcoes["delim"],
         "encoding": opcoes["encoding"],

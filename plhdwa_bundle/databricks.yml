@@ -209,6 +209,15 @@ variables:
     description: >-
       Vigia: espera (s) entre as tentativas de listar a pasta de CTL (3 tentativas) antes de terminar com erro.
     default: "30"
+  desempenho_vigia:
+    description: >-
+      Serverless do vigia: STANDARD (mais barato, arranque mais lento) ou PERFORMANCE_OPTIMIZED.
+    default: STANDARD
+  desempenho_job_std:
+    description: >-
+      Serverless do job independente "standard" (objetos com tipo_job = STANDARD): STANDARD ou
+      PERFORMANCE_OPTIMIZED. O ambiente interno de testes usa PERFORMANCE_OPTIMIZED para os testes rodarem mais rápido.
+    default: STANDARD
   vigia_parado_min:
     description: O vigia dispara o despachante se houver CTL parado há mais de N minutos
     default: "5"

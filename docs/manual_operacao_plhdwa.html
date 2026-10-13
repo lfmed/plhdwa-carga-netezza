@@ -138,6 +138,16 @@
     <div class="card"><h4>Regra de ouro da ordem</h4><p>No máximo <b>1 arquivo de cada objeto</b> em andamento, em qualquer modo. Arquivos do mesmo objeto saem em ordem de data de geração.</p></div>
     <div class="card"><h4>Trava</h4><p>Erro trava <b>só aquele objeto</b>; os outros continuam. Destravar = corrigir a causa e registrar um <code>DESBLOQUEIO</code> (seção 8.4).</p></div>
   </div>
+
+  <h3>Nome e conteúdo dos arquivos</h3>
+  <table>
+    <tr><th>Item</th><th>Regra</th><th>Exemplo</th></tr>
+    <tr><td>Nome</td><td><code>&lt;cod&gt;_[&lt;grupo&gt;_]&lt;nome&gt;_&lt;yyyyMMdd&gt;_&lt;yyyyMMddHHmmss&gt;</code>: código do objeto, grupo (opcional), nome, data de movimento, data de geração</td><td><code>1230_CCR_FATPARCELA_20260930_20260930141733.CTL</code></td></tr>
+    <tr><td>Grupo</td><td>1º segmento depois do código (sem <code>_</code>). Só para visualização: coluna e filtro <b>Grupo</b> nas visões e no dashboard; a carga usa só o código</td><td><code>CCR</code></td></tr>
+    <tr><td>Extensão</td><td><code>.ctl</code> / <code>.dat</code> em qualquer caixa</td><td><code>.CTL</code>, <code>.ctl</code>, <code>.Dat</code></td></tr>
+    <tr><td>Conteúdo do CTL</td><td>4 campos separados por <code>|</code>, cabeçalho opcional: objeto | instituições | nr_cpr | data de movimento <code>yyyy-MM-dd</code>; listas separadas por vírgula (<code>0</code> = todos). O <b>nr_cpr</b> filtra o REPLACE WHERE da FATO; o <b>cd_inst</b> vai só para a controle (Db2). Outros formatos = ERRO_CTL</td><td><code>Cd_obj|cd_inst|nr_cpr|dt_mov</code> / <code>1230|1,2,3|202609|2026-09-01</code></td></tr>
+    <tr><td>Nome fora do padrão</td><td>Depois de 5 min (<code>mover_invalido_min</code>), o CTL e o DAT do par vão para <code>erro/</code>, com o evento <code>NOME_INVALIDO</code>; nenhum objeto trava</td><td><code>1230_FATPARCELA.CTL</code></td></tr>
+  </table>
 </section>
 
 <!-- 3 -->
@@ -361,8 +371,8 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
   <h3>8.5 Reprocessar e desfazer</h3>
   <table>
     <tr><th>Situação</th><th>Como</th></tr>
-    <tr><td>Reprocessar uma data (FATO)</td><td>O Netezza reenvia o par com <b>nova data de geração</b>; o REPLACE WHERE substitui só data × instituições do CTL</td></tr>
-    <tr><td>Conferir o conteúdo do CTL</td><td><code>Cd_obj, cd_inst, dt_mov</code> / <code>1230, 1,2,3, 2026-09-01</code>: 1º = objeto, último = data de movimento, o meio = instituições (<code>0</code> = todas). Formato antigo com <code>|</code> também é aceito</td></tr>
+    <tr><td>Reprocessar uma data (FATO)</td><td>O Netezza reenvia o par com <b>nova data de geração</b>; o REPLACE WHERE substitui só data × nr_cpr do CTL (<code>0</code> = a data inteira)</td></tr>
+    <tr><td>Conferir o conteúdo do CTL</td><td><code>Cd_obj|cd_inst|nr_cpr|dt_mov</code> / <code>1230|1,2,3|202609|2026-09-01</code>: objeto | instituições (vão para a controle) | nr_cpr (filtro da carga) | data de movimento</td></tr>
     <tr><td>Reprocessar uma DIM</td><td>Reenviar o par: a tabela inteira é substituída</td></tr>
     <tr><td>Desfazer uma carga errada</td><td><code>DESCRIBE HISTORY</code> → versão anterior (coluna <code>userMetadata</code> = nome do CTL) → <code>RESTORE TABLE … TO VERSION AS OF n</code></td></tr>
   </table>
@@ -372,7 +382,7 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
     <tr><th>Job</th><th>Roda</th><th>Rodar à mão quando</th></tr>
     <tr><td>PLHDWA · despachante</td><td>Na chegada de CTL (1 lote por execução)</td><td>Depois de um desbloqueio, para não esperar o vigia</td></tr>
     <tr><td>PLHDWA · carga arquivo · performance / standard</td><td>Disparados pelo despachante (objetos JOB)</td><td>Nunca</td></tr>
-    <tr><td>PLHDWA · vigia</td><td>A cada 15 min</td><td>—</td></tr>
+    <tr><td>PLHDWA · vigia</td><td>A cada 15 min (se não conseguir listar a pasta, tenta 3 vezes com 30 s entre elas e termina com erro)</td><td>—</td></tr>
     <tr><td>PLHDWA · instalação e pós-deploy</td><td>Após cada deploy</td><td>Cria/atualiza tabelas e visões, grava os jobs em <code>ctl_execucao</code>, GRANTs</td></tr>
     <tr><td>PLHDWA · testar controle Db2</td><td>Antes da 1ª carga e a cada mudança de Db2/tabela/comando</td><td>Testa conexão, tabela e comando; grava e apaga 2 linhas de teste (objeto 0)</td></tr>
   </table>
@@ -386,7 +396,7 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
   <h3>9.1 Passo a passo</h3>
   <ol class="passos">
     <li><h4>Obter a DDL da tabela externa do Netezza</h4><p>Salvar em <code>implantacao/netezza/</code>.</p></li>
-    <li><h4>Definir as regras</h4><p>Código do objeto, tabela destino, FATO ou DIM, colunas de data de movimento e de instituição (FATO), <b>modo de execução</b> (DESPACHANTE ou JOB) e tipo do job (se JOB).</p></li>
+    <li><h4>Definir as regras</h4><p>Código do objeto, tabela destino, FATO ou DIM, colunas de data de movimento e do nr_cpr (FATO), <b>modo de execução</b> (DESPACHANTE ou JOB) e tipo do job (se JOB).</p></li>
     <li><h4>Gerar e criar a tabela e a linha na ctl_parametros</h4><p>Conversor (9.2: gera o <code>CREATE TABLE</code> e o <code>MERGE</code> na <code>ctl_parametros</code>), ou uma linha na planilha do cadastro em lote (9.5).</p></li>
     <li><h4>Validar a leitura</h4><p><code>sql/90_validar_leitura_amostra.sql</code> com um arquivo real: contagem sem erro.</p></li>
     <li><h4>Teste ponta a ponta</h4><p>Enviar um par real e conferir: log CONCLUIDO, controle CONCLUIDO com a quantidade, linhas na tabela.</p></li>
@@ -397,14 +407,14 @@ databricks fs cp $L/erro/$B.CTL $L/ctl/$B.CTL &amp;&amp; databricks fs rm $L/err
 python3 implantacao/ferramentas/converter_ddl_netezza.py implantacao/netezza/ddl_external_dwa_ccr_fatparcela.sql \
   --catalogo &lt;catalogo&gt; --schema plhdwanew --tabela fat_parcela \
   --catalogo-controle &lt;catalogo&gt; --schema-controle plhdwanew \
-  --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
+  --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-cpr NR_CPR \
   &gt; implantacao/sql/objetos/1230_fat_parcela.sql
 
 <span class="c"># FATO grande em job independente Performance Optimized</span>
 python3 implantacao/ferramentas/converter_ddl_netezza.py implantacao/netezza/exemplos/ddl_external_fat_extrato_conta.sql \
   --catalogo &lt;catalogo&gt; --schema plhdwanew --tabela fat_extrato_conta \
   --catalogo-controle &lt;catalogo&gt; --schema-controle plhdwanew \
-  --cod-objeto 2012 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-instituicao SK_INS \
+  --cod-objeto 2012 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-cpr NR_CPR \
   --execucao JOB --tipo-job PERFORMANCE_OPTIMIZED &gt; implantacao/sql/objetos/2012_fat_extrato_conta.sql
 
 <span class="c"># criar</span>
@@ -415,7 +425,7 @@ python3 implantacao/ferramentas/executar_sql.py implantacao/sql/objetos/1230_fat
     <tr><th>Item</th><th>Onde</th><th>Exemplo</th></tr>
     <tr><td>Código do objeto</td><td><code>cod_objeto</code> (1 linha por código)</td><td><code>1230</code></td></tr>
     <tr><td>Tabela destino</td><td><code>catalogo_destino</code>, <code>schema_destino</code>, <code>tabela_destino</code></td><td><code>plh</code> · <code>fat_parcela</code></td></tr>
-    <tr><td>Tipo de carga, data, instituição</td><td><code>tipo_carga</code>, <code>col_data_mov</code>, <code>col_instituicao</code></td><td><code>FATO</code>, <code>SK_TMO_MVM</code>, <code>SK_INS</code></td></tr>
+    <tr><td>Tipo de carga, data, nr_cpr</td><td><code>tipo_carga</code>, <code>col_data_mov</code>, <code>col_cpr</code> (vazia = <code>NR_CPR</code>)</td><td><code>FATO</code>, <code>SK_TMO_MVM</code>, <code>NR_CPR</code></td></tr>
     <tr><td>Modo de execução</td><td><code>execucao</code>, <code>tipo_job</code></td><td><code>DESPACHANTE</code> ou <code>JOB</code> · <code>PERFORMANCE_OPTIMIZED</code> ou <code>STANDARD</code></td></tr>
     <tr><td>Ligado / pausado</td><td><code>ativo</code></td><td><code>true</code> (false = arquivos ficam parados em <code>ctl/</code>, sem erro)</td></tr>
     <tr><td>Formato do arquivo</td><td><code>delimitador</code>, <code>encoding</code>, <code>header</code>, <code>escape</code>, <code>quote</code>, <code>null_value</code>, <code>date_format</code>, <code>timestamp_format</code></td><td>vazio = padrão do motor</td></tr>
@@ -431,9 +441,9 @@ UPDATE plh.ctl_parametros SET escape = '\\', alterado_por = current_user(), alte
 UPDATE plh.ctl_parametros SET encoding = 'UTF-8', null_value = 'NULL', alterado_por = current_user(), alterado_em = current_timestamp() WHERE cod_objeto = 1230;</pre>
 
   <h3>9.5 Cadastro em lote</h3>
-<pre><span class="c"># objetos.csv: cod;ddl;tabela;tipo;col_data;col_inst;execucao;tipo_job</span>
-<span class="c"># 2001;ddl_external_fat_contrato.sql;fat_contrato;FATO;SK_TMO_MVM;SK_INS;DESPACHANTE;PERFORMANCE_OPTIMIZED</span>
-<span class="c"># 2018;ddl_external_fat_risco_basileia.sql;fat_risco_basileia;FATO;SK_TMO_MVM;SK_INS;JOB;STANDARD</span>
+<pre><span class="c"># objetos.csv: cod;ddl;tabela;tipo;col_data;col_cpr;execucao;tipo_job (col_cpr vazio = NR_CPR)</span>
+<span class="c"># 2001;ddl_external_fat_contrato.sql;fat_contrato;FATO;SK_TMO_MVM;NR_CPR;DESPACHANTE;PERFORMANCE_OPTIMIZED</span>
+<span class="c"># 2018;ddl_external_fat_risco_basileia.sql;fat_risco_basileia;FATO;SK_TMO_MVM;NR_CPR;JOB;STANDARD</span>
 <span class="c"># 2007;ddl_external_dim_cliente.sql;dim_cliente;DIM;;;DESPACHANTE;PERFORMANCE_OPTIMIZED</span>
 implantacao/ferramentas/cadastrar_em_lote.sh objetos.csv implantacao/netezza/exemplos \
   &lt;catalogo&gt; plhdwanew &lt;catalogo&gt; plhdwanew &lt;warehouse_id&gt;</pre>
@@ -452,12 +462,15 @@ implantacao/ferramentas/cadastrar_em_lote.sh objetos.csv implantacao/netezza/exe
 <section id="faq">
   <h2><span class="n">10</span>Perguntas frequentes</h2>
   <details><summary>Chegou um CTL e nada aconteceu.</summary><p>Espere ~2 min (gatilho + arranque). Se já houver lote rodando, o arquivo entra no próximo ciclo. Se o lote rodou e não processou nada, a mensagem do lote diz o que ele viu na pasta e por quê: <code>SELECT status, mensagem FROM plh.log_lote ORDER BY evento_ts DESC LIMIT 4</code> (ex.: “com nome fora do padrão movido(s) para erro/”, “de objeto travado”, “de objeto com ativo = false”, “pasta vazia ou inexistente”). Se a pasta não puder ser listada (permissão, external location com problema), o despachante e o vigia terminam com <b>erro</b> e a mensagem do job traz o erro real (“não consegui listar …”). Gatilho sem disparar: veja a aba <b>Trigger</b> do job despachante.</p></details>
+  <details><summary>Como vejo só os arquivos de um grupo?</summary><p>Dashboard <b>PLHDWA · Execução</b>: filtro <b>Grupo</b> (páginas Em execução, Objetos e controle e Desempenho). Em SQL: <code>SELECT * FROM plh.v_status_arquivo WHERE grupo = 'CCR'</code>. Arquivos sem grupo no nome ficam com grupo vazio.</p></details>
   <details><summary>Onde vejo os jobs em execução?</summary><p>Dashboard <b>PLHDWA · Execução</b>, página <b>Em execução</b>: cards “Objetos em execução”, “Jobs independentes em execução”, “Arquivos rodando no despachante” e “Despachante: lotes em andamento”, mais as tabelas “Objetos em execução” (1 linha por objeto), “Jobs independentes em execução” (1 linha por job, inclusive na fila do Jobs ou trocando de arquivo; coluna “Execução do job” = run_id no Jobs), “Arquivos em execução” e “Lotes”.</p></details>
   <details><summary>Um arquivo do despachante dá erro: os outros do mesmo lote param?</summary><p>Não. Só o objeto do arquivo trava; os demais objetos continuam no mesmo lote. No fim, o lote fica CONCLUIDO_COM_ERROS e a execução termina FAILED (para notificar).</p></details>
   <details><summary>Ficou uma pasta com nome de arquivo dentro de <code>tmp/</code>. O que faço?</summary><p>É o arquivo limpo (etapa de limpeza do DAT, variável <code>limpeza_dat</code>) de uma execução que caiu no meio. Não precisa fazer nada: o próximo lote do despachante apaga as pastas de arquivos que não estão em andamento. Os outros arquivos do cliente em <code>tmp/</code> nunca são tocados. Para ver quanto tempo a limpeza levou em cada arquivo, veja a mensagem do evento CARREGADO (“limpeza do DAT em N s”).</p></details>
   <details><summary>Um objeto grande ficou lento depois da limpeza do DAT</summary><p>Confira o modo na mensagem do evento CARREGADO (“limpeza do DAT em N s (modo …)”). O padrão <b>CLIENTE</b> limpa e lê em partes paralelas. Se aparecer <b>MULTILINHA</b>, o objeto está com <code>limpeza_modo = 'MULTILINHA'</code> na <code>ctl_parametros</code> (1 arquivo, uma tarefa só): troque para <code>NULL</code> ou <code>'CLIENTE'</code>.</p></details>
   <details><summary>A controle é atualizada por lote ou por arquivo?</summary><p>Por arquivo, sempre: cada um grava, no fim, CONCLUIDO ou ERRO na sua própria linha, rodando no despachante ou em job. O lote é só uma referência (<code>lote_id</code>).</p></details>
   <details><summary>A controle (Db2) caiu no meio da janela.</summary><p>Arquivos que iam começar travam com ERRO_DB2 sem carregar nada; os que estavam terminando ficam com os dados no Delta e ERRO_DB2. Quando a controle voltar: desbloquear e rodar o despachante.</p></details>
+  <details><summary>Como instalar uma versão nova pelo CI/CD?</summary><p>O pipeline roda <code>databricks bundle deploy -t &lt;dev|hml|prd&gt;</code> com o <code>svc_hash</code> (service principal que executa os jobs; também define a pasta do bundle no workspace) por <code>--var svc_hash=…</code> ou pela variável de ambiente <code>BUNDLE_VAR_svc_hash</code>. Depois do deploy, rode o job <b>PLHDWA · instalação e pós-deploy</b>.</p></details>
+  <details><summary>Rodar sem o Db2?</summary><p>Variável <code>usar_db2 = nao</code>: a carga e o log são os mesmos, sem gravação na controle e sem <code>CONFIRMADO_DB2</code>; o job “testar controle Db2” só avisa.</p></details>
   <details><summary>Chegaram 300 arquivos: abre um despachante para cada um?</summary><p>Não. Existe no máximo 1 lote rodando; ele trata os 300 conforme as vagas de cada modo (seção 5).</p></details>
 </section>
 
