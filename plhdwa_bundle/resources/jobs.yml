@@ -47,6 +47,8 @@ resources:
         - {name: db2_chave_senha, default: "${var.db2_chave_senha}"}
         - {name: db2_tabela, default: "${var.db2_tabela}"}
         - {name: db2_comando, default: "${var.db2_comando}"}
+        - {name: db2_timeout_s, default: "${var.db2_timeout_s}"}
+        - {name: db2_mensagem_max, default: "${var.db2_mensagem_max}"}
         - {name: db2_max_conexoes, default: "${var.db2_max_conexoes}"}
         - {name: lakebase_instance, default: "${var.lakebase_instance}"}
         - {name: lakebase_database, default: "${var.lakebase_database}"}
@@ -121,6 +123,8 @@ resources:
         - {name: db2_chave_senha, default: "${var.db2_chave_senha}"}
         - {name: db2_tabela, default: "${var.db2_tabela}"}
         - {name: db2_comando, default: "${var.db2_comando}"}
+        - {name: db2_timeout_s, default: "${var.db2_timeout_s}"}
+        - {name: db2_mensagem_max, default: "${var.db2_mensagem_max}"}
         - {name: db2_max_conexoes, default: "${var.db2_max_conexoes}"}
         - {name: lakebase_instance, default: "${var.lakebase_instance}"}
         - {name: lakebase_database, default: "${var.lakebase_database}"}
@@ -260,6 +264,8 @@ resources:
         - {name: db2_chave_senha, default: "${var.db2_chave_senha}"}
         - {name: db2_tabela, default: "${var.db2_tabela}"}
         - {name: db2_comando, default: "${var.db2_comando}"}
+        - {name: db2_timeout_s, default: "${var.db2_timeout_s}"}
+        - {name: db2_mensagem_max, default: "${var.db2_mensagem_max}"}
         - {name: db2_max_conexoes, default: "${var.db2_max_conexoes}"}
         - {name: lakebase_instance, default: "${var.lakebase_instance}"}
         - {name: lakebase_database, default: "${var.lakebase_database}"}
@@ -278,9 +284,7 @@ resources:
       tags: {OWNER: "${var.owner_tag}"}
       performance_target: PERFORMANCE_OPTIMIZED
       parameters:
-        - {name: criar_tabela, default: "false"}   # true = cria db2_tabela com sql/02_db2_controle_ddl.sql
-        - {name: gravar_teste, default: "true"}    # grava 2 arquivos fictícios (objeto 0) com o comando do motor
-        - {name: apagar_teste, default: "true"}    # apaga as linhas de teste no fim
+        - {name: objeto_teste, default: ""}   # vazio = não grava nada; um código = executa os UPDATE de verdade nele
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
         - {name: landing, default: "${var.landing}"}
@@ -304,6 +308,8 @@ resources:
         - {name: db2_chave_senha, default: "${var.db2_chave_senha}"}
         - {name: db2_tabela, default: "${var.db2_tabela}"}
         - {name: db2_comando, default: "${var.db2_comando}"}
+        - {name: db2_timeout_s, default: "${var.db2_timeout_s}"}
+        - {name: db2_mensagem_max, default: "${var.db2_mensagem_max}"}
         - {name: db2_max_conexoes, default: "${var.db2_max_conexoes}"}
         - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
       environments: *ambiente_plhdwa

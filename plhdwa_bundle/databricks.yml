@@ -112,9 +112,18 @@ variables:
     default: ""
   db2_comando:
     description: >-
-      Arquivo em sql/ com o comando que grava a controle (14 parâmetros "?"). Padrão: layout do PLHDWA
-      (02_db2_controle_merge.sql). Para uma tabela no layout CONTROLE genérico: 02_db2_controle_merge_tabela_controle.sql
-    default: 02_db2_controle_merge.sql
+      Arquivo em sql/ com os UPDATE da controle, um por status (seções -- [CONCLUIDO], -- [ERRO] e, só com
+      db2_registrar_inicio = true, -- [EM_PROCESSAMENTO]). Só UPDATE é aceito: o motor nunca insere nem apaga.
+      Padrão: os comandos oficiais do cliente (02_db2_controle_update.sql).
+    default: 02_db2_controle_update.sql
+  db2_timeout_s:
+    description: >-
+      Segundos de espera para conectar no Db2 e por lock na tabela da controle. Passou disso, a tentativa falha
+      com a mensagem do Db2 (e conta em db2_tentativas), em vez de o job ficar esperando sem fim.
+    default: "30"
+  db2_mensagem_max:
+    description: Tamanho máximo da mensagem de erro enviada ao Db2 (o tamanho da coluna da controle)
+    default: "500"
   lakebase_instance:
     description: (só db2_modo = SIMULADO) instância Lakebase da controle simulada
     default: ""

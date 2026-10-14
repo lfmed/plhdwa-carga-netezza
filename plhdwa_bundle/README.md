@@ -2,9 +2,9 @@
 
 O Netezza grava um `.dat` e depois um `.CTL` direto no bucket S3 (ou num volume do Unity Catalog, variável `landing_tipo`). A chegada do CTL dispara o **despachante**:
 cada execução dele é um **lote**. Cada arquivo é validado, carregado num único commit Delta na tabela destino
-(REPLACE WHERE com `filtrotabela = SIM`, substituição total com `NAO`) e registra na **controle do Db2** o fim:
-a conclusão (`CONCLUIDO`, com a quantidade) ou o erro (`ERRO`, com a mensagem). O início fica no log do Databricks
-(com `db2_registrar_inicio = true`, o Db2 recebe também o início, `EM_PROCESSAMENTO`).
+(REPLACE WHERE com `filtrotabela = SIM`, substituição total com `NAO`) e atualiza a **controle do Db2** no fim,
+só com `UPDATE` (comandos oficiais do cliente): carga OK (`CONCLUIDO`) ou erro (`ERRO`, com a mensagem). O início fica
+no log do Databricks.
 Tudo é serverless, parametrizado por variáveis do bundle e leva a tag `OWNER`.
 
 Documentação funcional: `documentacao_carga_netezza_databricks.html` · Operação: `manual_operacao_plhdwa.html`.
@@ -23,11 +23,10 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
 | `src/carga_arquivo.py` | Job independente: começa no arquivo recebido e segue com os próximos do mesmo objeto |
 | `src/vigia.py` | Religa o despachante se houver CTL parado (ex.: depois de um DESBLOQUEIO) |
 | `src/pos_deploy.py` | Instalação idempotente: tabelas/visões (inclusive a `ctl_parametros`), ids dos jobs, GRANTs, conferência do cadastro |
-| `src/testar_controle_db2.py` | Testa conexão, tabela e comando da controle no Db2 |
+| `src/testar_controle_db2.py` | Testa conexão, tabela e os comandos da controle no Db2 (PREPARE, sem gravar) |
 | `sql/01_tabelas_operacionais.sql` | Tabelas e visões operacionais (executado pelo pós-deploy, com as variáveis) |
-| `sql/02_db2_controle_ddl.sql` | DDL da tabela da controle no Db2 (para o DBA) |
-| `sql/02_db2_controle_merge.sql` | Comando que grava a controle (editável pelo DBA; 14 parâmetros) |
-| `sql/02_db2_controle_merge_tabela_controle.sql` | Variante para uma tabela no layout `CONTROLE` genérico |
+| `sql/02_db2_controle_update.sql` | Comandos oficiais da controle (só `UPDATE`, um por status; editável pelo DBA) |
+| `sql/02_db2_controle_update_tabela_controle.sql` | Variante para uma tabela no layout `CONTROLE` genérico (testes) |
 | `dashboards/` | Consultas (`datasets.sql`) e gerador dos `.lvdash.json` |
 | `ferramentas/` | Cadastro de objetos: DDL do Netezza → tabela Delta + linha na `ctl_parametros`; execução de SQL; cadastro em lote |
 | `testes/` | Gerador de arquivos de teste (usado pelo job de teste de tempo) |
@@ -76,9 +75,9 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
    ```
 7. **Pacotes Python**: o environment dos jobs instala `databricks-sdk`, `pg8000` e `ibm-db` do PyPI. Se o serverless
    do cliente não tiver saída para a internet, configure um repositório PyPI interno (mirror) para o workspace.
-8. **Tabela da controle no Db2**: o DBA cria com `sql/02_db2_controle_ddl.sql` (trocando `{tabela}`), ou o
-   job de teste cria com `criar_tabela = true`. Se a controle já existe com outro layout, ajuste o comando
-   (seção 6).
+8. **Tabela da controle no Db2**: a do cliente (`ctl.OBJETO_DEPENDENCIA_EXECUCAO`). O motor **só faz UPDATE**: a
+   linha de cada objeto (`CD_OBJ`) precisa já existir; ele nunca insere nem apaga. O usuário do motor precisa de
+   `SELECT` e `UPDATE` nela. Rota de rede (NCC/firewall) do serverless até o host e a porta do Db2.
 9. **Service principal da área** (variável `svc_hash` = *application ID* do SP): o bundle fica em
    `/Workspace/Users/<svc_hash>/.bundle/plhdwa/<target>` e todos os jobs rodam como ele (`run_as` nos targets
    dev, hml e prd). Sem padrão: se o CI/CD não preencher (`--var svc_hash=<application id>` ou a variável de
@@ -111,7 +110,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 | Grupo | Variáveis |
 |---|---|
 | Onde ficam as coisas | `catalogo`, `schema`, `landing_tipo`, `landing`, `warehouse_id`, `fuso_horario` |
-| Controle (Db2) | `usar_db2` (`sim` · `nao` = não executa nenhuma etapa do Db2), `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s` |
+| Controle (Db2) | `usar_db2` (`sim` · `nao` = não executa nenhuma etapa do Db2), `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s`, `db2_timeout_s`, `db2_mensagem_max` |
 | Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min`, `vigia_retry_espera_s`, `mover_invalido_min`, `desempenho_vigia` e `desempenho_job_std` (serverless `STANDARD`, padrão, ou `PERFORMANCE_OPTIMIZED`) |
 | Identidade | `svc_hash` (application ID do service principal: pasta do bundle e `run_as` dos jobs) |
 | Governança | `owner_tag`, `grupo_owner`, `email_alertas` |
@@ -271,13 +270,32 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
   compartilham um pool de no máximo `db2_max_conexoes` conexões (padrão 8); cada job independente usa 1.
   Total no Db2 = pool + jobs independentes em execução: respeite o limite de conexões do Db2 do cliente.
   Medido no teste: conexão em ~0,8 s, ~0,15 s por gravação; 22 objetos em paralelo com 8 conexões, 0 erros.
-- O comando está em `sql/<db2_comando>`: um `MERGE` com 14 parâmetros `?`, em ordem fixa, descrita no arquivo.
-  O DBA pode trocar nomes de tabela/colunas e a regra de status sem mexer no Python.
-  - `02_db2_controle_merge.sql` (padrão): 1 linha por arquivo, chave objeto + data de movimento + data de geração.
-  - `02_db2_controle_merge_tabela_controle.sql`: tabela `CONTROLE` (`ID_CONTROLE`, `NOME_JOB`, `STATUS` em
-    INICIADO/EXECUTANDO/CONCLUIDO/ERRO, `DT_INICIO`, `DT_FIM`, `MENSAGEM_ERRO`).
+- **Só UPDATE.** Os comandos estão em `sql/<db2_comando>` (padrão `02_db2_controle_update.sql`, os comandos
+  oficiais do cliente), uma seção por status, cada uma com **um** `UPDATE`:
+  ```sql
+  -- [CONCLUIDO]
+  UPDATE {tabela} SET IC_PRC_EXC = 0, IC_PRC_FNZ = 1, DH_FIM_PRC = CURRENT TIMESTAMP
+   WHERE CD_OBJ IN (CAST(:cod_objeto AS INTEGER))
+  -- [ERRO]
+  UPDATE {tabela} SET IC_PRC_EXC = 0, IC_PRC_FNZ = 0, DH_FIM_PRC = CURRENT TIMESTAMP,
+         DS_MNG_ERR_EXC = CAST(:mensagem AS VARCHAR(2000))
+   WHERE CD_OBJ IN (CAST(:cod_objeto AS INTEGER))
+  ```
+  `{tabela}` = `db2_tabela`. Os dados do arquivo entram como marcadores `:nome` (`:cod_objeto`, `:mensagem`,
+  `:arquivo`, `:data_movimento`, `:data_geracao`, `:instituicoes`, `:qtd_registros`, `:dt_inicio`, `:dt_fim`, ...;
+  lista no arquivo). O motor **recusa** qualquer comando que não seja `UPDATE` (MERGE, INSERT, DELETE) e mais de
+  um comando por seção. A mensagem de erro vai com até `db2_mensagem_max` caracteres (padrão 500: ajuste ao
+  tamanho de `DS_MNG_ERR_EXC`).
+- **Linha não encontrada:** `UPDATE` que atualiza 0 linhas = `ERRO_DB2` no arquivo ("não encontrou a linha do
+  objeto ... o motor não insere"), sem novas tentativas; mais de 1 linha é aceito.
+- **Tempo-limite (`db2_timeout_s`, padrão 30 s):** a conexão usa `ConnectTimeout` e cada sessão `SET CURRENT LOCK
+  TIMEOUT`. Rede bloqueada ou linha da controle presa por outra transação viram erro com a mensagem do Db2, com as
+  novas tentativas de `db2_tentativas`, e depois `ERRO_DB2`, em vez de o job ficar esperando sem fim.
+- **Log:** cada gravação aparece na saída do job: "controle CONCLUIDO de <arquivo>: gravando no Db2", "ok, N
+  linha(s) em X s" ou "falhou em X s: <erro do Db2>".
 - **O que vai para o Db2** (variável `db2_registrar_inicio`):
-  - `false` (padrão): só o fim, `CONCLUIDO` ou `ERRO`. A carga não depende do Db2 para começar. Se o Db2 estiver
+  - `false` (padrão): só o fim, `CONCLUIDO` ou `ERRO`. A carga não depende do Db2 para começar.
+    Com `true`, o arquivo de comandos precisa da seção `-- [EM_PROCESSAMENTO]` (os comandos oficiais não têm). Se o Db2 estiver
     fora, o arquivo é carregado e só a conclusão falha (`ERRO_DB2`, objeto travado): os arquivos ficam em `raw/` e,
     após o DESBLOQUEIO, a retomada refaz só a conclusão, sem carregar de novo.
   - `true`: grava também `EM_PROCESSAMENTO` antes da carga; sem ele gravado, o arquivo **não é carregado**
@@ -295,7 +313,9 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
 
 ## 7. Testar
 
-- `plhdwa_testar_controle_db2`: grava 2 arquivos fictícios (objeto 0) com o comando real e apaga no fim.
+- `plhdwa_testar_controle_db2`: conecta (com o tempo-limite), confere a tabela e faz o `PREPARE` de cada `UPDATE`
+  no Db2 (confere colunas e tipos) **sem gravar nada**. Com o parâmetro `objeto_teste` = um código combinado com o
+  DBA, executa de verdade o `UPDATE` de CONCLUIDO e depois o de ERRO nesse objeto (a linha fica como ERRO).
 - Arquivo real: copie um par DAT + CTL para `dados` e depois `ctl` (o CTL dispara). No S3:
   `aws s3 cp` (ou o próprio Netezza); `plhdwa_gerar_teste_tempo` também grava no S3 com `landing_tipo = S3`. Esperado: carga na
   tabela destino, `CONCLUIDO` em `v_status_arquivo`, linha `CONCLUIDO` na controle do Db2, arquivos apagados.

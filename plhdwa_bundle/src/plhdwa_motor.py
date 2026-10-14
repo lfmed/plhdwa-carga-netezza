@@ -77,7 +77,11 @@ PARAMETROS = {
     "db2_chave_usuario":  ("db2_usuario",      "chave do usuário no secret scope"),
     "db2_chave_senha":    ("db2_senha",        "chave da senha no secret scope"),
     "db2_tabela":         ("",                 "schema.tabela da controle no Db2 (troca o {tabela} do comando)"),
-    "db2_comando":        ("02_db2_controle_merge.sql", "arquivo em sql/ com o comando que grava a controle"),
+    "db2_comando":        ("02_db2_controle_update.sql", "arquivo em sql/ com os UPDATE da controle (um por "
+                                               "status: [CONCLUIDO], [ERRO] e, opcional, [EM_PROCESSAMENTO])"),
+    "db2_timeout_s":      ("30",               "segundos de espera para conectar no Db2 e por lock na controle; "
+                                               "passou disso, a tentativa falha (em vez de esperar sem fim)"),
+    "db2_mensagem_max":   ("500",              "tamanho máximo da mensagem de erro enviada ao Db2 (o da coluna da controle)"),
     "lakebase_instance":  ("",                 "instância Lakebase que simula o Db2 Controle"),
     "lakebase_database":  ("plhdwa",           "banco (database) da controle simulada no Lakebase"),
     "lakebase_tabela":    ("controle.db2_controle", "schema.tabela da controle simulada no Lakebase"),
@@ -124,7 +128,7 @@ COMUNS = ["catalogo", "schema", "landing", "landing_tipo", "pasta_dat", "pasta_c
           "mover_invalido_min", "listagem_espera_s", "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
-          "db2_espera_base_s", "db2_registrar_inicio",
+          "db2_espera_base_s", "db2_registrar_inicio", "db2_timeout_s", "db2_mensagem_max",
           "lakebase_instance", "lakebase_database", "lakebase_tabela",
           "precheck_linhas", "precheck_min_mb", "tipo_job", "job_id", "job_run_id"]
 
@@ -1191,19 +1195,52 @@ def _conexao_lakebase(nova=False):
 _db2 = {}                                # comando lido de sql/<db2_comando>, montado uma vez
 
 
-def _comando_db2():
-    """Lê o comando que grava a controle (arquivo em sql/, editável pelo DBA) e troca {tabela}.
-    Comentários (--) saem; precisa ter exatamente 14 parâmetros "?" (ordem descrita no próprio arquivo)."""
+# Dados de um arquivo que os comandos da controle podem usar, como marcadores :nome (o motor troca por "?" e
+# manda os valores na ordem em que aparecem).
+MARCADORES_DB2 = ("cod_objeto", "nome_tabela", "data_movimento", "data_geracao", "instituicoes", "status",
+                  "qtd_registros", "arquivo", "job_run_id", "lote_id", "modo_execucao", "dt_inicio", "dt_fim",
+                  "mensagem")
+_RX_SECAO_DB2 = re.compile(r"^--\s*\[(CONCLUIDO|ERRO|EM_PROCESSAMENTO)\]\s*$", re.MULTILINE)
+
+
+class SemLinhaControle(Exception):
+    """O UPDATE da controle não encontrou nenhuma linha: não adianta tentar de novo."""
+
+
+def ler_comandos_db2(texto, tabela, com_inicio=False, nome="db2_comando"):
+    """Comandos da controle por status, a partir do arquivo (editável pelo DBA). Cada status tem uma seção
+    "-- [CONCLUIDO]", "-- [ERRO]" (obrigatórias) e "-- [EM_PROCESSAMENTO]" (só com db2_registrar_inicio = true)
+    com UM comando UPDATE. Qualquer outro comando (MERGE, INSERT, DELETE...) é recusado.
+    Devolve {status: (sql com "?", [marcadores na ordem])}."""
+    partes = _RX_SECAO_DB2.split(texto)
+    comandos = {}
+    for status, corpo in zip(partes[1::2], partes[2::2]):
+        sql_ = re.sub(r"/\*.*?\*/", " ", corpo, flags=re.S)                     # comentários /* */
+        sql_ = "\n".join(l for l in sql_.splitlines() if not l.strip().startswith("--")).strip().rstrip(";").strip()
+        if not re.match(r"UPDATE\s", sql_, re.IGNORECASE):
+            raise ValueError(f"{nome} [{status}]: só UPDATE é permitido na controle (veio: {sql_[:60]!r})")
+        if ";" in sql_ or "?" in sql_:
+            raise ValueError(f"{nome} [{status}]: um comando só, com marcadores :nome (sem ';' nem '?')")
+        marcadores = re.findall(r":([a-z_]+)\b", sql_)
+        desconhecidos = sorted(set(marcadores) - set(MARCADORES_DB2))
+        if desconhecidos:
+            raise ValueError(f"{nome} [{status}]: marcador desconhecido {desconhecidos} (use {', '.join(MARCADORES_DB2)})")
+        comandos[status] = (re.sub(r":([a-z_]+)\b", "?", sql_).replace("{tabela}", tabela), marcadores)
+    faltam = [s for s in ("CONCLUIDO", "ERRO") + (("EM_PROCESSAMENTO",) if com_inicio else ()) if s not in comandos]
+    if faltam:
+        raise ValueError(f"{nome}: falta a seção {', '.join('-- [' + f + ']' for f in faltam)}")
+    return comandos
+
+
+def _comandos_db2():
+    """Comandos da controle (sql/<db2_comando>), lidos e conferidos uma vez por processo."""
     import os
     with _trava_cache:
-        if "sql" not in _db2:
+        if "comandos" not in _db2:
             caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sql", CTX["db2_comando"])
-            linhas = [l for l in open(caminho, encoding="utf-8").read().splitlines() if not l.strip().startswith("--")]
-            texto = "\n".join(linhas).strip().rstrip(";").replace("{tabela}", CTX["db2_tabela"])
-            if texto.count("?") != 14:
-                raise ValueError(f"{CTX['db2_comando']}: o comando precisa de 14 parâmetros '?', tem {texto.count('?')}")
-            _db2["sql"] = texto
-    return _db2["sql"]
+            _db2["comandos"] = ler_comandos_db2(open(caminho, encoding="utf-8").read(), CTX["db2_tabela"],
+                                                str(CTX["db2_registrar_inicio"]).lower() == "true", CTX["db2_comando"])
+    return _db2["comandos"]
 
 
 def _conexao_db2():
@@ -1224,7 +1261,13 @@ def _conexao_db2():
         dsn += "SECURITY=SSL;"
         if CTX["db2_certificado"]:
             dsn += f"SSLServerCertificate={CTX['db2_certificado']};"
-    return ibm_db_dbi.connect(dsn + (CTX["db2_extra"] or ""), "", "")
+    # Sem tempo-limite, uma rede que descarta os pacotes ou um lock na controle deixam o job esperando sem fim.
+    limite = int(CTX["db2_timeout_s"] or 30)
+    con = ibm_db_dbi.connect(dsn + f"ConnectTimeout={limite};" + (CTX["db2_extra"] or ""), "", "")
+    cur = con.cursor()
+    cur.execute(f"SET CURRENT LOCK TIMEOUT {limite}")
+    cur.close()
+    return con
 
 
 # Pool de conexões com o Db2: as threads do despachante compartilham no máximo db2_max_conexoes conexões
@@ -1281,21 +1324,39 @@ def _horario(epoch):
 
 
 def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
-    """Executa o comando da controle no Db2 com os 14 parâmetros, na ordem documentada em sql/<db2_comando>."""
+    """Executa o UPDATE da controle para este status (seção [status] de sql/<db2_comando>), com os marcadores
+    :nome trocados pelos dados do arquivo. 0 linhas atualizadas = SemLinhaControle (nada é inserido)."""
+    sql_, marcadores = _comandos_db2()[status]
     g = arq["dt_ger"]                        # yyyyMMddHHmmss do nome do arquivo
-    valores = (arq["cod"], arq["tabela_nome"][:128], int(arq["dt_mov"]),
-               f"{g[:4]}-{g[4:6]}-{g[6:8]} {g[8:10]}:{g[10:12]}:{g[12:14]}",
-               (insts or "")[:4000] or None, status, qtd, arq["nome_ctl"][:256], CTX["job_run_id"], CTX["lote_id"],
-               modo, _horario(inicio), _horario(fim), (mensagem or "")[:2000] or None)
+    dados = {"cod_objeto": arq["cod"], "nome_tabela": arq["tabela_nome"][:128], "data_movimento": int(arq["dt_mov"]),
+             "data_geracao": f"{g[:4]}-{g[4:6]}-{g[6:8]} {g[8:10]}:{g[10:12]}:{g[12:14]}",
+             "instituicoes": (insts or "")[:4000] or None, "status": status, "qtd_registros": qtd,
+             "arquivo": arq["nome_ctl"][:256], "job_run_id": CTX["job_run_id"], "lote_id": CTX["lote_id"],
+             "modo_execucao": modo, "dt_inicio": _horario(inicio), "dt_fim": _horario(fim),
+             "mensagem": (mensagem or "")[:int(CTX["db2_mensagem_max"] or 500)] or None}
+    valores = tuple(dados[m] for m in marcadores)
+    print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: gravando no Db2", flush=True)
+    t0 = time.time()
     for tentativa in (1, 2):                 # 2ª tentativa com conexão nova (ex.: conexão ociosa derrubada)
         try:
             with conexao_db2() as con:
                 cur = con.cursor()
-                cur.execute(_comando_db2(), valores)
+                cur.execute(sql_, valores)
+                linhas = cur.rowcount
                 cur.close()
+                if linhas == 0:
+                    con.rollback()
+                    raise SemLinhaControle(f"o UPDATE da controle ({status}) não encontrou a linha do objeto "
+                                           f"{arq['cod']} em {CTX['db2_tabela']} (0 linhas; o motor não insere)")
                 con.commit()
+            print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: ok, {linhas} linha(s) "
+                  f"em {time.time() - t0:.1f} s", flush=True)
             return
-        except Exception:
+        except SemLinhaControle:
+            raise
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: falhou em "
+                  f"{time.time() - t0:.1f} s: {str(e)[:300]}", flush=True)
             if tentativa == 2:
                 raise
 
@@ -1364,6 +1425,8 @@ def sensibilizar_controle(arq, status, insts, modo, qtd=None, inicio=None, fim=N
             return
         except (ValueError, FileNotFoundError) as e:   # comando/configuração errados: não adianta tentar de novo
             raise FalhaControle(f"configuração da controle inválida: {e}")
+        except SemLinhaControle as e:                  # a linha não existe: tentar de novo não muda nada
+            raise FalhaControle(str(e))
         except Exception as e:
             erro = e
             print(f"controle ({status}): tentativa {t + 1} falhou: {e}")
