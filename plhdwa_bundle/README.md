@@ -2,7 +2,7 @@
 
 O Netezza grava um `.dat` e depois um `.CTL` direto no bucket S3 (ou num volume do Unity Catalog, variável `landing_tipo`). A chegada do CTL dispara o **despachante**:
 cada execução dele é um **lote**. Cada arquivo é validado, carregado num único commit Delta na tabela destino
-(REPLACE WHERE na FATO, substituição total na DIM) e registra na **controle do Db2** o fim:
+(REPLACE WHERE com `filtrotabela = SIM`, substituição total com `NAO`) e registra na **controle do Db2** o fim:
 a conclusão (`CONCLUIDO`, com a quantidade) ou o erro (`ERRO`, com a mensagem). O início fica no log do Databricks
 (com `db2_registrar_inicio = true`, o Db2 recebe também o início, `EM_PROCESSAMENTO`).
 Tudo é serverless, parametrizado por variáveis do bundle e leva a tag `OWNER`.
@@ -137,8 +137,8 @@ Cd_obj|cd_inst|nr_cpr|dt_mov
 1230|1,2,3|202609|2026-09-01
 ```
 1º campo = código do objeto · 2º = instituições (`0` = todas) · 3º = nr_cpr (`0` = todos) · 4º = data de movimento
-(`yyyy-MM-dd`). **O `nr_cpr` filtra o REPLACE WHERE da FATO** (`col_data_mov = data AND col_cpr IN (nr_cpr)`; com
-`0`, a data inteira); **o `cd_inst` vai só para a controle (Db2)**. Na DIM o `nr_cpr` é ignorado (a tabela inteira é
+(`yyyy-MM-dd`). **O `nr_cpr` filtra o REPLACE WHERE** (objetos com `filtrotabela = SIM`) (`nomecolunatempo = data AND nomecolunainstituicao IN (nr_cpr)`; com
+`0`, a data inteira); **o `cd_inst` vai só para a controle (Db2)**. Com `filtrotabela = NAO` o `nr_cpr` é ignorado (a tabela inteira é
 substituída). Código e data precisam bater com o nome do arquivo. Dão `ERRO_CTL`: número de campos diferente de 4
 (os formatos anteriores, com 3 ou 5 campos ou só com vírgulas, não valem mais), lista vazia, não numérica ou com `0`
 junto com outros, data inválida, mais de uma linha de dados. Linha do DAT com `nr_cpr` fora da lista do CTL =
@@ -156,15 +156,15 @@ layout: colunas, ordem e tipos.
 |---|---|---|
 | Chave | `cod_objeto` (código do CTL; 1 linha por código) | obrigatório |
 | Destino | `catalogo_destino`, `schema_destino`, `tabela_destino` | obrigatório |
-| Carga | `tipo_carga` (`FATO` = REPLACE WHERE data de movimento + nr_cpr do CTL · `DIM` = substitui a tabela), `col_data_mov`, `col_cpr` (coluna do nr_cpr), `col_instituicao` (informativo) | FATO exige `col_data_mov`; `col_cpr` vazia = `NR_CPR` |
+| Carga | `filtrotabela` (`SIM` = REPLACE WHERE pela data de movimento + nr_cpr do CTL · `NAO` = substitui a tabela inteira), `nomecolunatempo` (coluna da data), `nomecolunainstituicao` (coluna comparada com o nr_cpr do CTL) | `SIM` exige `nomecolunatempo`; `nomecolunainstituicao` vazia = `NR_CPR` |
 | Execução | `execucao` (`DESPACHANTE` · `JOB`), `tipo_job` (`PERFORMANCE_OPTIMIZED` · `STANDARD`), `ativo` | `DESPACHANTE`, `PERFORMANCE_OPTIMIZED`, `true` |
 | Formato do arquivo | `delimitador`, `encoding`, `header`, `escape`, `quote`, `null_value`, `date_format`, `timestamp_format` | `\|`, `ISO-8859-15`, `true`, sem, sem, vazio, `yyyy-MM-dd`, `yyyy-MM-dd HH:mm[:ss]` |
 | Limpeza (5b) | `limpeza`, `limpeza_modo`, `limpeza_quote` | variável `limpeza_dat`, `CLIENTE`, `'` |
 | Informativo | `tabela_origem` (Netezza), `observacao`, `alterado_por`, `alterado_em` | — |
 
 - **CHECK** na tabela recusam valor inválido no próprio `INSERT`/`UPDATE` (tipo de carga, modo, tipo de job, modo
-  de limpeza, FATO sem as colunas).
-- **Antes de cada carga** o motor confere a linha: código em exatamente 1 linha, tabela destino existente e, na FATO,
+  de limpeza, `filtrotabela` diferente de `SIM`/`NAO`, `SIM` sem `nomecolunatempo`).
+- **Antes de cada carga** o motor confere a linha: código em exatamente 1 linha, tabela destino existente e, com `filtrotabela = SIM`,
   colunas existentes. Se não bater: `ERRO_CADASTRO` com a causa e nada é gravado. O pós-deploy lista as
   inconsistências.
 - **`ativo = false`** pausa o objeto: os arquivos ficam na pasta de CTL, sem erro, e são carregados quando ele
@@ -179,20 +179,33 @@ cd ferramentas
 # 1 objeto
 python3 converter_ddl_netezza.py exemplos/ddl_external_dwa_ccr_fatparcela.sql --catalogo <cat> --schema <sch> \
         --tabela fat_parcela --catalogo-controle <catalogo> --schema-controle <schema> \
-        --cod-objeto 1230 --tipo-carga FATO --col-data-mov SK_TMO_MVM --col-cpr NR_CPR \
+        --cod-objeto 1230 --filtro-tabela SIM --nome-coluna-tempo SK_TMO_MVM --nome-coluna-instituicao NR_CPR \
         > cadastro/1230_fat_parcela.sql
 python3 executar_sql.py cadastro/1230_fat_parcela.sql --warehouse <warehouse_id>
-# vários objetos (csv: cod;ddl;tabela;tipo;col_data;col_cpr;execucao;tipo_job)
+# vários objetos (csv: cod;ddl;tabela;filtrotabela;nomecolunatempo;nomecolunainstituicao;execucao;tipo_job)
 ./cadastrar_em_lote.sh exemplos/objetos.csv <pasta_das_ddls> <cat> <sch> <catalogo> <schema> [warehouse_id]
 ```
 `<catalogo>`/`<schema>` = variáveis `catalogo` e `schema` do bundle (onde está a `ctl_parametros`).
 
 Conferir o cadastro:
 ```sql
-SELECT cod_objeto, concat_ws('.', catalogo_destino, schema_destino, tabela_destino) AS destino, tipo_carga,
-       col_data_mov, col_cpr, execucao, tipo_job, ativo
+SELECT cod_objeto, concat_ws('.', catalogo_destino, schema_destino, tabela_destino) AS destino, filtrotabela,
+       nomecolunatempo, nomecolunainstituicao, execucao, tipo_job, ativo
 FROM <catalogo>.<schema>.ctl_parametros ORDER BY cod_objeto;
 ```
+
+**Clustering das tabelas com `filtrotabela = SIM`.** O REPLACE WHERE filtra por `nomecolunatempo` e
+`nomecolunainstituicao`; as tabelas grandes devem ser clusterizadas por essas duas colunas (o conversor já gera assim).
+O liquid clustering exige estatísticas nas colunas do `CLUSTER BY`, e o Delta só as coleta nas 32 primeiras colunas:
+se a coluna do nr_cpr estiver depois da 32ª (ex.: `NR_CPR` é a 57ª do FATPARCELA), inclua-a em
+`delta.dataSkippingStatsColumns` antes. Em uma tabela que já existe:
+```sql
+ALTER TABLE <destino> SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = '<as 32 primeiras colunas>,<nomecolunainstituicao>');
+ALTER TABLE <destino> CLUSTER BY (<nomecolunatempo>, <nomecolunainstituicao>);
+ANALYZE TABLE <destino> COMPUTE DELTA STATISTICS;   -- recalcula as estatísticas dos arquivos já gravados
+OPTIMIZE <destino>;                                  -- reorganiza os dados (fora da janela de carga)
+```
+Sem a primeira linha, o `CLUSTER BY` falha com `DELTA_CLUSTERING_COLUMN_MISSING_STATS`.
 
 ## 5b. Limpeza do DAT antes da carga (pedido do cliente)
 
@@ -304,7 +317,7 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
 - **Prioridade:** entre os objetos que podem andar, vai primeiro o que tem mais trabalho pendente.
 - **Job independente** segue com o mesmo objeto (até `job_max_arquivos`/`job_max_minutos`): o arranque é
   pago uma vez por objeto.
-- **Carga** sempre com `replaceWhere` (DIM usa `1 = 1`), para gravar só os dados e preservar a tag `OWNER`,
+- **Carga** sempre com `replaceWhere` (`filtrotabela = NAO` usa `1 = 1`), para gravar só os dados e preservar a tag `OWNER`,
   as propriedades e os grants da tabela. Destino, colunas do `replaceWhere` e formato vêm da `ctl_parametros`.
 - **DAT vazio** (0 bytes, só header ou em branco) = `ERRO_DAT_VAZIO`, antes da carga.
 - **Sem nova tentativa automática** nos jobs: erro = objeto travado + e-mail; outros objetos seguem.

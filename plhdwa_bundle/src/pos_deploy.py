@@ -50,13 +50,42 @@ sobrou = set(re.findall(r"\$\{(\w+)\}", texto))
 if sobrou:
     raise ValueError(f"marcadores sem valor no SQL: {sobrou}")
 
-# Colunas novas em tabelas que já existem (CREATE TABLE IF NOT EXISTS não altera tabela existente). Antes do SQL,
-# porque as visões e os CHECK podem usar as colunas novas.
-for tabela, coluna, depois in (("ctl_parametros", "col_cpr STRING", "col_instituicao"),
-                               ("log_carga_evento", "nr_cpr STRING", "instituicoes")):
-    if spark.catalog.tableExists(fq(tabela)) and coluna.split()[0] not in [c.lower() for c in spark.table(fq(tabela)).columns]:
-        spark.sql(f"ALTER TABLE {fq(tabela)} ADD COLUMNS ({coluna} AFTER {depois})")
-        print(f"coluna nova: {tabela}.{coluna.split()[0]}")
+# Tabelas que já existem (CREATE TABLE IF NOT EXISTS não altera tabela existente). Antes do SQL, porque as visões
+# e os CHECK usam as colunas novas. Pode rodar quantas vezes for preciso: o que já está no formato novo não muda.
+def colunas_de(tabela):
+    return [c.lower() for c in spark.table(fq(tabela)).columns] if spark.catalog.tableExists(fq(tabela)) else []
+
+if colunas_de("log_carga_evento") and "nr_cpr" not in colunas_de("log_carga_evento"):
+    spark.sql(f"ALTER TABLE {fq('log_carga_evento')} ADD COLUMNS (nr_cpr STRING AFTER instituicoes)")
+    print("coluna nova: log_carga_evento.nr_cpr")
+
+# ctl_parametros com os nomes do cliente (14/10/2026): tipo_carga (FATO/DIM) -> filtrotabela (SIM/NAO),
+# col_data_mov -> nomecolunatempo, col_cpr -> nomecolunainstituicao; col_instituicao sai.
+# Renomear e apagar coluna Delta exige column mapping (delta.columnMapping.mode = 'name').
+cols = colunas_de("ctl_parametros")
+if cols and ("tipo_carga" in cols or "col_instituicao" in cols):
+    t = fq("ctl_parametros")
+    linhas_antes = spark.table(t).count()
+    for ck in ("ck_tipo_carga", "ck_fato_colunas"):          # os CHECK antigos usam as colunas antigas
+        spark.sql(f"ALTER TABLE {t} DROP CONSTRAINT IF EXISTS {ck}")
+    if spark.sql(f"SHOW TBLPROPERTIES {t} ('delta.columnMapping.mode')").first().value != "name":
+        spark.sql(f"ALTER TABLE {t} SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+    if "col_cpr" not in cols and "nomecolunainstituicao" not in cols:
+        spark.sql(f"ALTER TABLE {t} ADD COLUMNS (col_cpr STRING)")
+        cols.append("col_cpr")
+    for antigo, novo in (("tipo_carga", "filtrotabela"), ("col_data_mov", "nomecolunatempo"),
+                         ("col_cpr", "nomecolunainstituicao")):
+        if antigo in cols:
+            spark.sql(f"ALTER TABLE {t} RENAME COLUMN {antigo} TO {novo}")
+            print(f"ctl_parametros: {antigo} -> {novo}")
+    spark.sql(f"UPDATE {t} SET filtrotabela = CASE filtrotabela WHEN 'FATO' THEN 'SIM' ELSE 'NAO' END "
+              f"WHERE filtrotabela IN ('FATO', 'DIM')")
+    if "col_instituicao" in cols:
+        spark.sql(f"ALTER TABLE {t} DROP COLUMN col_instituicao")
+        print("ctl_parametros: col_instituicao removida")
+    if spark.table(t).count() != linhas_antes:
+        raise RuntimeError("migração da ctl_parametros mudou o número de linhas")
+    print(f"ctl_parametros migrada: {linhas_antes} linha(s), FATO -> SIM e DIM -> NAO")
 
 # Um comando por ";" no fim da linha. Linhas só de comentário são descartadas.
 comandos = [c.strip() for c in re.split(r";\s*\n", texto)]
@@ -156,9 +185,9 @@ for r in linhas:
     except Exception:
         problemas.append((r.cod_objeto, destino, "tabela destino não encontrada"))
         continue
-    for nome, padrao in (("col_data_mov", ""), ("col_cpr", "NR_CPR")):
+    for nome, padrao in (("nomecolunatempo", ""), ("nomecolunainstituicao", "NR_CPR")):
         v = getattr(r, nome) or padrao
-        if r.tipo_carga == "FATO" and v.lower() not in colunas:
+        if r.filtrotabela == "SIM" and v.lower() not in colunas:
             problemas.append((r.cod_objeto, destino, f"{nome} = {v!r} não é coluna da tabela"))
 print(f"ctl_parametros: {len(linhas)} objeto(s), {len(problemas)} problema(s)")
 if problemas:

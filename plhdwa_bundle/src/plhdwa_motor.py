@@ -578,18 +578,20 @@ def metadados(cod, validade_s=60):
         schema = CTX["spark"].table(t).schema
     except Exception as e:
         raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: tabela destino {t} não encontrada ({str(e)[:300]})")
-    tipo = (o.get("tipo_carga") or "").upper()
-    if tipo not in ("FATO", "DIM"):
-        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: tipo_carga {o.get('tipo_carga')!r} (use FATO ou DIM)")
+    # filtrotabela SIM = REPLACE WHERE pela data (+ nr_cpr): no motor, "FATO"; NAO = tabela inteira: "DIM"
+    filtro = o.get("filtrotabela") or ""
+    if filtro not in ("SIM", "NAO"):
+        raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: filtrotabela {o.get('filtrotabela')!r} (use SIM ou NAO)")
+    tipo = "FATO" if filtro == "SIM" else "DIM"
     nomes = {f.name.lower(): f.name for f in schema.fields}
     cols = {}
-    for chave, padrao in (("col_data_mov", ""), ("col_cpr", "NR_CPR")):   # as colunas do REPLACE WHERE
+    for chave, padrao in (("nomecolunatempo", ""), ("nomecolunainstituicao", "NR_CPR")):   # colunas do REPLACE WHERE
         v = o.get(chave) or padrao
         if tipo == "FATO" and v.lower() not in nomes:
             raise ErroCarga("ERRO_CADASTRO", f"objeto {cod}: {chave} = {v!r} não é coluna de {t}")
         cols[chave] = nomes.get(v.lower(), v)
     meta = {"tabela": t, "params": o, "schema": schema, "tipo": tipo,
-            "col_data": cols["col_data_mov"], "col_cpr": cols["col_cpr"]}
+            "col_data": cols["nomecolunatempo"], "col_cpr": cols["nomecolunainstituicao"]}
     with _trava_cache:
         _cache_meta[cod] = (time.time(), meta)
     return meta

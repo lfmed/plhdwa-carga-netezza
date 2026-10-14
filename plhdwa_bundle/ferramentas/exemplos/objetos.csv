@@ -1,2 +1,2 @@
-cod;ddl;tabela;tipo;col_data;col_cpr;execucao;tipo_job
-1230;ddl_external_dwa_ccr_fatparcela.sql;fat_parcela;FATO;SK_TMO_MVM;NR_CPR;DESPACHANTE;PERFORMANCE_OPTIMIZED
+cod;ddl;tabela;filtrotabela;nomecolunatempo;nomecolunainstituicao;execucao;tipo_job
+1230;ddl_external_dwa_ccr_fatparcela.sql;fat_parcela;SIM;SK_TMO_MVM;NR_CPR;DESPACHANTE;PERFORMANCE_OPTIMIZED

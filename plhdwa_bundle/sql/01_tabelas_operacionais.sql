@@ -47,10 +47,9 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.ctl_parametros (
   catalogo_destino  STRING  NOT NULL COMMENT 'catálogo da tabela destino',
   schema_destino    STRING  NOT NULL COMMENT 'schema da tabela destino',
   tabela_destino    STRING  NOT NULL COMMENT 'tabela destino (o layout, colunas e tipos, vem dela)',
-  tipo_carga        STRING  NOT NULL COMMENT 'FATO = REPLACE WHERE data de movimento (+ nr_cpr do CTL) · DIM = substitui a tabela',
-  col_data_mov      STRING           COMMENT 'FATO: coluna da data de movimento (REPLACE WHERE)',
-  col_instituicao   STRING           COMMENT 'informativo: a instituição do CTL vai só para a controle (Db2)',
-  col_cpr           STRING           COMMENT 'FATO: coluna do nr_cpr do CTL (REPLACE WHERE, se o CTL trouxer lista; NULL = NR_CPR)',
+  filtrotabela      STRING  NOT NULL COMMENT 'SIM = REPLACE WHERE pela data de movimento (+ nr_cpr do CTL) · NAO = substitui a tabela inteira',
+  nomecolunatempo   STRING           COMMENT 'filtrotabela = SIM: coluna da data de movimento (REPLACE WHERE)',
+  nomecolunainstituicao STRING       COMMENT 'filtrotabela = SIM: coluna comparada com o nr_cpr do CTL (REPLACE WHERE, se o CTL trouxer lista; NULL = NR_CPR)',
   execucao          STRING  NOT NULL DEFAULT 'DESPACHANTE' COMMENT 'DESPACHANTE (thread no despachante) | JOB (job independente)',
   tipo_job          STRING  NOT NULL DEFAULT 'PERFORMANCE_OPTIMIZED' COMMENT 'modo JOB: PERFORMANCE_OPTIMIZED | STANDARD',
   ativo             BOOLEAN NOT NULL DEFAULT true COMMENT 'false = os arquivos do objeto ficam parados na pasta de CTL',
@@ -74,10 +73,10 @@ TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
 
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros SET TAGS ('OWNER' = '${owner_tag}');
 
-ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_carga;
-ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_tipo_carga CHECK (tipo_carga IN ('FATO', 'DIM'));
-ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_fato_colunas;
-ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_fato_colunas CHECK (tipo_carga = 'DIM' OR coalesce(col_data_mov, '') <> '');
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_filtrotabela;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_filtrotabela CHECK (filtrotabela IN ('SIM', 'NAO'));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_filtro_colunas;
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_filtro_colunas CHECK (filtrotabela = 'NAO' OR coalesce(nomecolunatempo, '') <> '');
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_execucao;
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_execucao CHECK (execucao IN ('DESPACHANTE', 'JOB'));
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_job;
