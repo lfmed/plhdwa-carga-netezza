@@ -66,7 +66,7 @@ WITH ultimo AS (
          max_by(status, evento_ts) AS ultimo_status, max_by(arquivo_ctl, evento_ts) AS ultimo_arquivo
   FROM __PLH__.log_carga_evento
   WHERE job_run_id IN (SELECT job_run_id FROM j) AND evento_ts >= current_timestamp() - INTERVAL 12 HOURS
-    AND status NOT IN ('ALERTA_FORMATO', 'DESBLOQUEIO')
+    AND status NOT LIKE 'ALERTA%' AND status <> 'DESBLOQUEIO'
   GROUP BY 1
 )
 SELECT j.job_run_id, j.cod_objeto, coalesce(e.tabela_destino, f.tabela_destino) AS tabela_destino, j.tipo_job,
@@ -138,7 +138,7 @@ GROUP BY 1;
 -- ds: erros_dia
 SELECT date(evento_ts) AS dia, status, count(*) AS qtd
 FROM __PLH__.log_carga_evento
-WHERE (status LIKE 'ERRO%' OR status = 'ALERTA_FORMATO') AND evento_ts >= date_sub(current_date(), 30)
+WHERE (status LIKE 'ERRO%' OR status LIKE 'ALERTA%') AND evento_ts >= date_sub(current_date(), 30)
 GROUP BY 1, 2;
 
 -- ds: filas

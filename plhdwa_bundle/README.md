@@ -292,7 +292,20 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
   TIMEOUT`. Rede bloqueada ou linha da controle presa por outra transação viram erro com a mensagem do Db2, com as
   novas tentativas de `db2_tentativas`, e depois `ERRO_DB2`, em vez de o job ficar esperando sem fim.
 - **Log:** cada gravação aparece na saída do job: "controle CONCLUIDO de <arquivo>: gravando no Db2", "ok, N
-  linha(s) em X s" ou "falhou em X s: <erro do Db2>".
+  linha(s) em X s" ou "falhou em X s: <erro completo do Db2>". Cada tentativa que falha grava na hora um evento
+  **`ALERTA_DB2`** em `log_carga_evento`, com a mensagem completa (o `ALERTA_DB2` não muda o status do arquivo):
+  ```sql
+  SELECT evento_ts, arquivo_ctl, status, mensagem FROM <catalogo>.<schema>.log_carga_evento
+  WHERE status IN ('ALERTA_DB2', 'ERRO_DB2') ORDER BY evento_ts DESC LIMIT 20;
+  ```
+- **Limite duro na conexão:** o `ConnectTimeout` do driver só cobre a abertura TCP; a conexão inteira (inclusive a
+  negociação SSL) tem limite de 2 × `db2_timeout_s` + 5 s. Em falha de conexão nova não há 2ª tentativa imediata
+  (só repetiria a espera); ela só acontece quando a conexão veio do pool (ociosa derrubada pelo Db2).
+- **Erro de SSL** (`SQL30081N` com `"SSL"` e `sqlccSSLSocketSetup`): a conexão TCP abriu e a negociação TLS não
+  terminou. Confira se `db2_porta` é a porta **SSL** do Db2 (com `db2_ssl = true`), se a CA do certificado do Db2
+  está em `db2_certificado` (arquivo num volume) e se não há proxy/firewall interceptando TLS. O código está em
+  "Protocol specific error code(s)": 414 = certificado não confiável, 420 = conexão fechada pelo servidor,
+  406 = erro de E/S na negociação.
 - **O que vai para o Db2** (variável `db2_registrar_inicio`):
   - `false` (padrão): só o fim, `CONCLUIDO` ou `ERRO`. A carga não depende do Db2 para começar.
     Com `true`, o arquivo de comandos precisa da seção `-- [EM_PROCESSAMENTO]` (os comandos oficiais não têm). Se o Db2 estiver

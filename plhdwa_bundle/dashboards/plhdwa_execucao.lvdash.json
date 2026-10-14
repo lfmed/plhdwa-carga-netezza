@@ -82,7 +82,7 @@
     "         max_by(status, evento_ts) AS ultimo_status, max_by(arquivo_ctl, evento_ts) AS ultimo_arquivo\n",
     "  FROM log_carga_evento\n",
     "  WHERE job_run_id IN (SELECT job_run_id FROM j) AND evento_ts >= current_timestamp() - INTERVAL 12 HOURS\n",
-    "    AND status NOT IN ('ALERTA_FORMATO', 'DESBLOQUEIO')\n",
+    "    AND status NOT LIKE 'ALERTA%' AND status <> 'DESBLOQUEIO'\n",
     "  GROUP BY 1\n",
     ")\n",
     "SELECT j.job_run_id, j.cod_objeto, coalesce(e.tabela_destino, f.tabela_destino) AS tabela_destino, j.tipo_job,\n",
@@ -134,7 +134,7 @@
    "name": "eventos",
    "displayName": "eventos",
    "queryLines": [
-    "SELECT evento_ts, cod_objeto, nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.]CTL$', 1), '') AS grupo, arquivo_ctl, status, fila,\n",
+    "SELECT evento_ts, cod_objeto, nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo, arquivo_ctl, status, fila,\n",
     "       tipo_job, tabela_destino, left(mensagem, 300) AS mensagem\n",
     "FROM log_carga_evento\n",
     "WHERE evento_ts >= date_sub(current_date(), 1)\n",
@@ -186,7 +186,7 @@
    "queryLines": [
     "SELECT date(evento_ts) AS dia, status, count(*) AS qtd\n",
     "FROM log_carga_evento\n",
-    "WHERE (status LIKE 'ERRO%' OR status = 'ALERTA_FORMATO') AND evento_ts >= date_sub(current_date(), 30)\n",
+    "WHERE (status LIKE 'ERRO%' OR status LIKE 'ALERTA%') AND evento_ts >= date_sub(current_date(), 30)\n",
     "GROUP BY 1, 2\n"
    ]
   },

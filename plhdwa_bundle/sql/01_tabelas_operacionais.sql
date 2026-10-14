@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_carga_evento (
   data_geracao     TIMESTAMP COMMENT 'do nome do arquivo, no fuso do parâmetro fuso_horario',
   instituicoes     STRING    COMMENT 'cd_inst do CTL (vai para a controle): "0" = todas, ou lista separada por vírgula',
   nr_cpr           STRING    COMMENT 'nr_cpr do CTL (REPLACE WHERE da FATO): "0" = todos, ou lista separada por vírgula',
-  status           STRING    COMMENT 'ROTEADO | INICIADO | CARREGADO | CONFIRMADO_DB2 | CONCLUIDO | ERRO_* | ALERTA_FORMATO | DESBLOQUEIO',
+  status           STRING    COMMENT 'ROTEADO | INICIADO | CARREGADO | CONFIRMADO_DB2 | CONCLUIDO | ERRO_* | ALERTA_FORMATO | ALERTA_DB2 | DESBLOQUEIO',
   inicio           TIMESTAMP COMMENT 'início do processamento do arquivo',
   fim              TIMESTAMP COMMENT 'fim do processamento do arquivo',
   qtd_inserida     BIGINT,
@@ -186,7 +186,7 @@ ALTER TABLE ${catalogo}.${schema}.db2_sim_falhas SET TAGS ('OWNER' = '${owner_ta
 -- Visões operacionais (lidas pelo motor e pelos dashboards)
 -- =====================================================================================
 
--- Último status de cada arquivo (ALERTA_FORMATO não muda o status).
+-- Último status de cada arquivo (os ALERTA_*, de formato e de tentativa do Db2, não mudam o status).
 CREATE OR REPLACE VIEW ${catalogo}.${schema}.v_status_arquivo AS
 SELECT arquivo_ctl,
        max_by(cod_objeto, evento_ts)  AS cod_objeto,
@@ -196,7 +196,7 @@ SELECT arquivo_ctl,
        max(evento_ts)                 AS ultimo_evento,
        nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo   -- 1º segmento do nome depois do código (só visualização)
 FROM ${catalogo}.${schema}.log_carga_evento
-WHERE status <> 'ALERTA_FORMATO'
+WHERE status NOT LIKE 'ALERTA%'
 GROUP BY arquivo_ctl;
 
 -- Objeto travado = o último evento relevante do objeto é um ERRO_* (sem DESBLOQUEIO depois).
@@ -268,7 +268,7 @@ SELECT arquivo_ctl,
        unix_timestamp(current_timestamp()) - unix_timestamp(max(evento_ts)) AS segundos,
        nullif(regexp_extract(arquivo_ctl, '^[0-9]+_([^_]+)_.+_[0-9]{8}_[0-9]{14}[.][cC][tT][lL]$', 1), '') AS grupo
 FROM ${catalogo}.${schema}.log_carga_evento
-WHERE evento_ts >= current_timestamp() - INTERVAL 12 HOURS AND status NOT IN ('ALERTA_FORMATO', 'DESBLOQUEIO')
+WHERE evento_ts >= current_timestamp() - INTERVAL 12 HOURS AND status NOT LIKE 'ALERTA%' AND status <> 'DESBLOQUEIO'
 GROUP BY arquivo_ctl
 HAVING max_by(status, evento_ts) IN ('ROTEADO', 'INICIADO', 'CARREGADO');
 

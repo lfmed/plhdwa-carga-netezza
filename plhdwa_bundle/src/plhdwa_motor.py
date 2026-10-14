@@ -1263,11 +1263,36 @@ def _conexao_db2():
             dsn += f"SSLServerCertificate={CTX['db2_certificado']};"
     # Sem tempo-limite, uma rede que descarta os pacotes ou um lock na controle deixam o job esperando sem fim.
     limite = int(CTX["db2_timeout_s"] or 30)
-    con = ibm_db_dbi.connect(dsn + f"ConnectTimeout={limite};" + (CTX["db2_extra"] or ""), "", "")
+    con = ibm_db_dbi.connect(dsn + f"ConnectTimeout={limite};ReceiveTimeout={limite};" + (CTX["db2_extra"] or ""),
+                             "", "")
     cur = con.cursor()
     cur.execute(f"SET CURRENT LOCK TIMEOUT {limite}")
     cur.close()
     return con
+
+
+def _com_limite(funcao, segundos, o_que):
+    """Executa funcao() com um limite duro de tempo. O ConnectTimeout do driver só cobre a abertura TCP: uma
+    negociação SSL pendurada (porta sem SSL, proxy) ficaria minutos esperando. Passou do limite: TimeoutError,
+    e a conexão que porventura abrir depois é fechada."""
+    res, pronto, abandonada = {}, threading.Event(), threading.Event()
+
+    def alvo():
+        try:
+            res["ok"] = funcao()
+            if abandonada.is_set():
+                res["ok"].close()
+        except Exception as e:
+            res["erro"] = e
+        finally:
+            pronto.set()
+    threading.Thread(target=alvo, daemon=True).start()
+    if not pronto.wait(segundos):
+        abandonada.set()
+        raise TimeoutError(f"{o_que}: sem resposta em {segundos:.0f} s (rede, porta ou negociação SSL)")
+    if "erro" in res:
+        raise res["erro"]
+    return res["ok"]
 
 
 # Pool de conexões com o Db2: as threads do despachante compartilham no máximo db2_max_conexoes conexões
@@ -1287,10 +1312,13 @@ class conexao_db2:
                 _pool_cond.wait(timeout=60)
             if _pool_db2["livres"]:
                 self.con = _pool_db2["livres"].pop()
+                self.reusada = True
                 return self.con
             _pool_db2["abertas"] += 1
+        self.reusada = False
         try:
-            self.con = _conexao_db2()
+            limite = int(CTX["db2_timeout_s"] or 30)
+            self.con = _com_limite(_conexao_db2, 2 * limite + 5, f"conexão com o Db2 {CTX['db2_host']}:{CTX['db2_porta']}")
         except Exception:
             with _pool_cond:
                 _pool_db2["abertas"] -= 1
@@ -1337,9 +1365,10 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
     valores = tuple(dados[m] for m in marcadores)
     print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: gravando no Db2", flush=True)
     t0 = time.time()
-    for tentativa in (1, 2):                 # 2ª tentativa com conexão nova (ex.: conexão ociosa derrubada)
+    for tentativa in (1, 2):                 # 2ª tentativa com conexão nova, só se a 1ª veio do pool (ociosa derrubada)
+        pool = conexao_db2()
         try:
-            with conexao_db2() as con:
+            with pool as con:
                 cur = con.cursor()
                 cur.execute(sql_, valores)
                 linhas = cur.rowcount
@@ -1356,8 +1385,8 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
             raise
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: falhou em "
-                  f"{time.time() - t0:.1f} s: {str(e)[:300]}", flush=True)
-            if tentativa == 2:
+                  f"{time.time() - t0:.1f} s: {e}", flush=True)
+            if tentativa == 2 or not getattr(pool, "reusada", False):
                 raise
 
 
@@ -1429,7 +1458,11 @@ def sensibilizar_controle(arq, status, insts, modo, qtd=None, inicio=None, fim=N
             raise FalhaControle(str(e))
         except Exception as e:
             erro = e
-            print(f"controle ({status}): tentativa {t + 1} falhou: {e}")
+            print(f"controle ({status}): tentativa {t + 1} de {tentativas} falhou: {e}")
+            try:                                       # mensagem completa no log já na hora (não só no fim)
+                evento(arq, "ALERTA_DB2", mensagem=f"controle {status}, tentativa {t + 1} de {tentativas}: {e}")
+            except Exception as e2:
+                print(f"não consegui gravar o ALERTA_DB2: {e2}")
             if t < tentativas - 1:
                 time.sleep(base * 2 ** t)
     raise FalhaControle(str(erro))
