@@ -299,8 +299,15 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
 - **Tempo-limite (`db2_timeout_s`, padrão 30 s):** a conexão usa `ConnectTimeout` e cada sessão `SET CURRENT LOCK
   TIMEOUT`. Rede bloqueada ou linha da controle presa por outra transação viram erro com a mensagem do Db2, com as
   novas tentativas de `db2_tentativas`, e depois `ERRO_DB2`, em vez de o job ficar esperando sem fim.
-- **Log:** cada gravação aparece na saída do job: "controle CONCLUIDO de <arquivo>: gravando no Db2", "ok, N
-  linha(s) em X s" ou "falhou em X s: <erro completo do Db2>". Cada tentativa que falha grava na hora um evento
+- **Log:** cada gravação aparece na saída do job: "controle CONCLUIDO de <arquivo>: gravando no Db2: <comando>",
+  "ok, N linha(s) em X s" ou "falhou em X s: <erro completo do Db2>". O `<comando>` é o UPDATE exatamente como foi
+  executado, com os valores no lugar dos `?` (ex.: `... WHERE CD_OBJ IN (CAST('1230' AS INTEGER)) AND CD_INS IN (1, 3)`).
+  Cada UPDATE também vira um evento **`ALERTA_DB2_COMANDO`** em `log_carga_evento` ("controle CONCLUIDO: 2 linha(s)
+  atualizada(s) · <comando>", ou "0 linha(s)", ou "falhou: <erro>"); ele não muda o status do arquivo:
+  ```sql
+  SELECT evento_ts, arquivo_ctl, mensagem FROM <catalogo>.<schema>.log_carga_evento
+  WHERE status = 'ALERTA_DB2_COMANDO' ORDER BY evento_ts DESC LIMIT 20;
+  ``` Cada tentativa que falha grava na hora um evento
   **`ALERTA_DB2`** em `log_carga_evento`, com a mensagem completa (o `ALERTA_DB2` não muda o status do arquivo):
   ```sql
   SELECT evento_ts, arquivo_ctl, status, mensagem FROM <catalogo>.<schema>.log_carga_evento

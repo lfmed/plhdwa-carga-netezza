@@ -138,7 +138,8 @@ GROUP BY 1;
 -- ds: erros_dia
 SELECT date(evento_ts) AS dia, status, count(*) AS qtd
 FROM __PLH__.log_carga_evento
-WHERE (status LIKE 'ERRO%' OR status LIKE 'ALERTA%') AND evento_ts >= date_sub(current_date(), 30)
+WHERE (status LIKE 'ERRO%' OR status LIKE 'ALERTA%') AND status <> 'ALERTA_DB2_COMANDO'   -- comando executado: não é alerta
+  AND evento_ts >= date_sub(current_date(), 30)
 GROUP BY 1, 2;
 
 -- ds: filas

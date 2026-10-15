@@ -1368,6 +1368,25 @@ def _horario(epoch):
     return datetime.fromtimestamp(epoch, ZoneInfo(CTX["fuso_horario"])).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def sql_legivel_db2(sql_, valores):
+    """Comando com os valores no lugar dos "?" (só para o log; a execução usa os "?"): texto entre aspas, nulo = NULL."""
+    it = iter(valores)
+    literal = lambda v: ("NULL" if v is None else str(v) if isinstance(v, (int, float))
+                         else "'" + str(v).replace("'", "''") + "'")
+    return re.sub(r"\s+", " ", re.sub(r"\?", lambda _: literal(next(it, None)), sql_)).strip()
+
+
+def _log_comando_db2(arq, status, texto, resultado):
+    """Guarda no arquivo o comando executado na controle, para o evento ALERTA_DB2_COMANDO (gravado junto com os
+    outros eventos do arquivo: no CONCLUIDO, na mesma gravação; no erro, logo depois do ERRO na controle)."""
+    arq.setdefault("_log_db2", []).append((time.time(), f"controle {status}: {resultado} · {texto}"))
+
+
+def eventos_comando_db2(arq, **c):
+    """Eventos ALERTA_DB2_COMANDO pendentes deste arquivo (e limpa a lista)."""
+    return [(arq, "ALERTA_DB2_COMANDO", {**c, "ts": ts, "mensagem": m}) for ts, m in arq.pop("_log_db2", [])]
+
+
 def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
     """Executa o UPDATE da controle para este status (seção [status] de sql/<db2_comando>), com os marcadores
     :nome trocados pelos dados do arquivo. 0 linhas atualizadas = SemLinhaControle (nada é inserido)."""
@@ -1381,7 +1400,8 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
              "lote_id": CTX["lote_id"], "modo_execucao": modo, "dt_inicio": _horario(inicio), "dt_fim": _horario(fim),
              "mensagem": (mensagem or "")[:int(CTX["db2_mensagem_max"] or 500)] or None}
     sql_, valores = montar_sql_db2(sql_, marcadores, dados)
-    print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: gravando no Db2", flush=True)
+    texto = sql_legivel_db2(sql_, valores)
+    print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: gravando no Db2: {texto}", flush=True)
     t0 = time.time()
     for tentativa in (1, 2):                 # 2ª tentativa com conexão nova, só se a 1ª veio do pool (ociosa derrubada)
         pool = conexao_db2()
@@ -1391,6 +1411,7 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
                 cur.execute(sql_, valores)
                 linhas = cur.rowcount
                 cur.close()
+                _log_comando_db2(arq, status, texto, f"{linhas} linha(s) atualizada(s)")
                 if linhas == 0:
                     con.rollback()
                     raise SemLinhaControle(f"o UPDATE da controle ({status}) não encontrou a linha do objeto "
@@ -1405,6 +1426,7 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: falhou em "
                   f"{time.time() - t0:.1f} s: {e}", flush=True)
+            _log_comando_db2(arq, status, texto, f"falhou: {str(e)[:500]}")
             if tentativa == 2 or not getattr(pool, "reusada", False):
                 raise
 
@@ -1565,8 +1587,9 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
                 raise ErroCarga("ERRO_DB2", f"controle não registrou a conclusão: {e}", mover=False)
             confirmacao = [(arq, "CONFIRMADO_DB2", {**comum(), "ts": time.time()})]
         confirmado = time.time()
-        eventos(pend + confirmacao + [(arq, "CONCLUIDO", {**comum(), "ts": max(time.time(), confirmado + 0.001),
-                                                          "inicio": inicio, "fim": fim, "qtd_inserida": inseridas})])
+        eventos(pend + confirmacao + eventos_comando_db2(arq, **comum())
+                + [(arq, "CONCLUIDO", {**comum(), "ts": max(time.time(), confirmado + 0.001),
+                                       "inicio": inicio, "fim": fim, "qtd_inserida": inseridas})])
         apagar_par(arq)                                 # log antes de apagar: se cair no meio, só sobra arquivo
         return True
 
@@ -1587,6 +1610,12 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
                                   tentativas=1 if tipo == "ERRO_DB2" else 2)
         except Exception as e2:
             print(f"controle não recebeu o ERRO de {arq['nome_ctl']}: {e2}")
+        try:                                            # comandos executados na controle (ALERTA_DB2_COMANDO)
+            cmds = eventos_comando_db2(arq, **comum())
+            if cmds:
+                eventos(cmds)
+        except Exception as e3:
+            print(f"não consegui gravar o ALERTA_DB2_COMANDO: {e3}")
         if mover:
             mover_para_erro(arq)
         raise ErroCarga(tipo, msg, mover=False)

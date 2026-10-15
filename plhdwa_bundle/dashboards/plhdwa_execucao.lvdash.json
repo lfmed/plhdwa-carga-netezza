@@ -186,7 +186,8 @@
    "queryLines": [
     "SELECT date(evento_ts) AS dia, status, count(*) AS qtd\n",
     "FROM log_carga_evento\n",
-    "WHERE (status LIKE 'ERRO%' OR status LIKE 'ALERTA%') AND evento_ts >= date_sub(current_date(), 30)\n",
+    "WHERE (status LIKE 'ERRO%' OR status LIKE 'ALERTA%') AND status <> 'ALERTA_DB2_COMANDO'   -- comando executado: não é alerta\n",
+    "  AND evento_ts >= date_sub(current_date(), 30)\n",
     "GROUP BY 1, 2\n"
    ]
   },

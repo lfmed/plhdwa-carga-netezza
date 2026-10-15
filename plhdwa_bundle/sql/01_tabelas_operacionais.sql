@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_carga_evento (
   data_geracao     TIMESTAMP COMMENT 'do nome do arquivo, no fuso do parâmetro fuso_horario',
   instituicoes     STRING    COMMENT 'cd_inst do CTL (vai para a controle): "0" = todas, ou lista separada por vírgula',
   nr_cpr           STRING    COMMENT 'nr_cpr do CTL (REPLACE WHERE da FATO): "0" = todos, ou lista separada por vírgula',
-  status           STRING    COMMENT 'ROTEADO | INICIADO | CARREGADO | CONFIRMADO_DB2 | CONCLUIDO | ERRO_* | ALERTA_FORMATO | ALERTA_DB2 | DESBLOQUEIO',
+  status           STRING    COMMENT 'ROTEADO | INICIADO | CARREGADO | CONFIRMADO_DB2 | CONCLUIDO | ERRO_* | ALERTA_FORMATO | ALERTA_DB2 | ALERTA_DB2_COMANDO | DESBLOQUEIO',
   inicio           TIMESTAMP COMMENT 'início do processamento do arquivo',
   fim              TIMESTAMP COMMENT 'fim do processamento do arquivo',
   qtd_inserida     BIGINT,
