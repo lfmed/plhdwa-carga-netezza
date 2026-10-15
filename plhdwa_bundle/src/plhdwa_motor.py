@@ -1196,10 +1196,12 @@ _db2 = {}                                # comando lido de sql/<db2_comando>, mo
 
 
 # Dados de um arquivo que os comandos da controle podem usar, como marcadores :nome (o motor troca por "?" e
-# manda os valores na ordem em que aparecem).
-MARCADORES_DB2 = ("cod_objeto", "nome_tabela", "data_movimento", "data_geracao", "instituicoes", "status",
-                  "qtd_registros", "arquivo", "job_run_id", "lote_id", "modo_execucao", "dt_inicio", "dt_fim",
-                  "mensagem")
+# manda os valores na ordem em que aparecem). :lista_cd_inst = cd_inst do CTL como lista para IN (...): vira um
+# "?" por instituição (inteiros); "0" (todas) vira IN (0).
+MARCADORES_DB2 = ("cod_objeto", "nome_tabela", "data_movimento", "data_geracao", "instituicoes", "lista_cd_inst",
+                  "status", "qtd_registros", "arquivo", "job_run_id", "lote_id", "modo_execucao", "dt_inicio",
+                  "dt_fim", "mensagem")
+_LISTA_DB2 = "{lista_cd_inst}"           # lugar da lista no comando montado; vira "?, ?, ?" em montar_sql_db2
 _RX_SECAO_DB2 = re.compile(r"^--\s*\[(CONCLUIDO|ERRO|EM_PROCESSAMENTO)\]\s*$", re.MULTILINE)
 
 
@@ -1225,11 +1227,26 @@ def ler_comandos_db2(texto, tabela, com_inicio=False, nome="db2_comando"):
         desconhecidos = sorted(set(marcadores) - set(MARCADORES_DB2))
         if desconhecidos:
             raise ValueError(f"{nome} [{status}]: marcador desconhecido {desconhecidos} (use {', '.join(MARCADORES_DB2)})")
-        comandos[status] = (re.sub(r":([a-z_]+)\b", "?", sql_).replace("{tabela}", tabela), marcadores)
+        sql_ = re.sub(r":([a-z_]+)\b", lambda m: _LISTA_DB2 if m.group(1) == "lista_cd_inst" else "?", sql_)
+        comandos[status] = (sql_.replace("{tabela}", tabela), marcadores)
     faltam = [s for s in ("CONCLUIDO", "ERRO") + (("EM_PROCESSAMENTO",) if com_inicio else ()) if s not in comandos]
     if faltam:
         raise ValueError(f"{nome}: falta a seção {', '.join('-- [' + f + ']' for f in faltam)}")
     return comandos
+
+
+def lista_cd_inst(insts):
+    """cd_inst do CTL ("1,2,3" ou "0") -> [1, 2, 3] ou [0]. Desconhecido (erro antes de ler o CTL) = [0]."""
+    return [int(v) for v in (insts or "0").split(",")]
+
+
+def montar_sql_db2(sql_, marcadores, dados):
+    """Comando com "?" e valores na ordem; cada :lista_cd_inst vira um "?" por instituição."""
+    lista = dados.get("lista_cd_inst") or [0]
+    valores = []
+    for m in marcadores:
+        valores += lista if m == "lista_cd_inst" else [dados[m]]
+    return sql_.replace(_LISTA_DB2, ", ".join("?" * len(lista))), tuple(valores)
 
 
 def _comandos_db2():
@@ -1355,14 +1372,15 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
     """Executa o UPDATE da controle para este status (seção [status] de sql/<db2_comando>), com os marcadores
     :nome trocados pelos dados do arquivo. 0 linhas atualizadas = SemLinhaControle (nada é inserido)."""
     sql_, marcadores = _comandos_db2()[status]
+    insts = insts or "0"                     # erro antes de ler o CTL: cd_inst desconhecido = 0 (todas)
     g = arq["dt_ger"]                        # yyyyMMddHHmmss do nome do arquivo
     dados = {"cod_objeto": arq["cod"], "nome_tabela": arq["tabela_nome"][:128], "data_movimento": int(arq["dt_mov"]),
              "data_geracao": f"{g[:4]}-{g[4:6]}-{g[6:8]} {g[8:10]}:{g[10:12]}:{g[12:14]}",
-             "instituicoes": (insts or "")[:4000] or None, "status": status, "qtd_registros": qtd,
-             "arquivo": arq["nome_ctl"][:256], "job_run_id": CTX["job_run_id"], "lote_id": CTX["lote_id"],
-             "modo_execucao": modo, "dt_inicio": _horario(inicio), "dt_fim": _horario(fim),
+             "instituicoes": insts[:4000], "lista_cd_inst": lista_cd_inst(insts), "status": status,
+             "qtd_registros": qtd, "arquivo": arq["nome_ctl"][:256], "job_run_id": CTX["job_run_id"],
+             "lote_id": CTX["lote_id"], "modo_execucao": modo, "dt_inicio": _horario(inicio), "dt_fim": _horario(fim),
              "mensagem": (mensagem or "")[:int(CTX["db2_mensagem_max"] or 500)] or None}
-    valores = tuple(dados[m] for m in marcadores)
+    sql_, valores = montar_sql_db2(sql_, marcadores, dados)
     print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: gravando no Db2", flush=True)
     t0 = time.time()
     for tentativa in (1, 2):                 # 2ª tentativa com conexão nova, só se a 1ª veio do pool (ociosa derrubada)
@@ -1376,7 +1394,8 @@ def _gravar_db2(arq, status, insts, modo, qtd, inicio, fim, mensagem):
                 if linhas == 0:
                     con.rollback()
                     raise SemLinhaControle(f"o UPDATE da controle ({status}) não encontrou a linha do objeto "
-                                           f"{arq['cod']} em {CTX['db2_tabela']} (0 linhas; o motor não insere)")
+                                           f"{arq['cod']} (cd_inst {insts}) em {CTX['db2_tabela']} "
+                                           f"(0 linhas; o motor não insere)")
                 con.commit()
             print(f"[{time.strftime('%H:%M:%S')}] controle {status} de {arq['nome_ctl']}: ok, {linhas} linha(s) "
                   f"em {time.time() - t0:.1f} s", flush=True)

@@ -76,7 +76,8 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
 7. **Pacotes Python**: o environment dos jobs instala `databricks-sdk`, `pg8000` e `ibm-db` do PyPI. Se o serverless
    do cliente não tiver saída para a internet, configure um repositório PyPI interno (mirror) para o workspace.
 8. **Tabela da controle no Db2**: a do cliente (`ctl.OBJETO_DEPENDENCIA_EXECUCAO`). O motor **só faz UPDATE**: a
-   linha de cada objeto (`CD_OBJ`) precisa já existir; ele nunca insere nem apaga. O usuário do motor precisa de
+   linha de cada objeto e instituição (`CD_OBJ` + `CD_INS`, inclusive a linha `CD_INS = 0` para CTL com
+   `cd_inst = 0`) precisa já existir; ele nunca insere nem apaga. O usuário do motor precisa de
    `SELECT` e `UPDATE` nela. Rota de rede (NCC/firewall) do serverless até o host e a porta do Db2.
 9. **Service principal da área** (variável `svc_hash` = *application ID* do SP): o bundle fica em
    `/Workspace/Users/<svc_hash>/.bundle/plhdwa/<target>` e todos os jobs rodam como ele (`run_as` nos targets
@@ -137,7 +138,8 @@ Cd_obj|cd_inst|nr_cpr|dt_mov
 ```
 1º campo = código do objeto · 2º = instituições (`0` = todas) · 3º = nr_cpr (`0` = todos) · 4º = data de movimento
 (`yyyy-MM-dd`). **O `nr_cpr` filtra o REPLACE WHERE** (objetos com `filtrotabela = SIM`) (`nomecolunatempo = data AND nomecolunainstituicao IN (nr_cpr)`; com
-`0`, a data inteira); **o `cd_inst` vai só para a controle (Db2)**. Com `filtrotabela = NAO` o `nr_cpr` é ignorado (a tabela inteira é
+`0`, a data inteira); **o `cd_inst` vai só para a controle (Db2)**: o UPDATE filtra `CD_INS IN (cd_inst)` (com `0`,
+`CD_INS IN (0)`). Com `filtrotabela = NAO` o `nr_cpr` é ignorado (a tabela inteira é
 substituída). Código e data precisam bater com o nome do arquivo. Dão `ERRO_CTL`: número de campos diferente de 4
 (os formatos anteriores, com 3 ou 5 campos ou só com vírgulas, não valem mais), lista vazia, não numérica ou com `0`
 junto com outros, data inválida, mais de uma linha de dados. Linha do DAT com `nr_cpr` fora da lista do CTL =
@@ -276,18 +278,24 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
   -- [CONCLUIDO]
   UPDATE {tabela} SET IC_PRC_EXC = 0, IC_PRC_FNZ = 1, DH_FIM_PRC = CURRENT TIMESTAMP
    WHERE CD_OBJ IN (CAST(:cod_objeto AS INTEGER))
+     AND CD_INS IN (:lista_cd_inst)
   -- [ERRO]
   UPDATE {tabela} SET IC_PRC_EXC = 0, IC_PRC_FNZ = 0, DH_FIM_PRC = CURRENT TIMESTAMP,
          DS_MNG_ERR_EXC = CAST(:mensagem AS VARCHAR(2000))
    WHERE CD_OBJ IN (CAST(:cod_objeto AS INTEGER))
+     AND CD_INS IN (:lista_cd_inst)
   ```
   `{tabela}` = `db2_tabela`. Os dados do arquivo entram como marcadores `:nome` (`:cod_objeto`, `:mensagem`,
   `:arquivo`, `:data_movimento`, `:data_geracao`, `:instituicoes`, `:qtd_registros`, `:dt_inicio`, `:dt_fim`, ...;
-  lista no arquivo). O motor **recusa** qualquer comando que não seja `UPDATE` (MERGE, INSERT, DELETE) e mais de
+  lista no arquivo). **`:lista_cd_inst`** = o `cd_inst` do CTL para `IN (...)`: `1,3` vira `IN (?, ?)` com 1 e 3;
+  `0` vira `IN (0)` (a linha `CD_INS = 0`, não todas as linhas do objeto). Erro antes de ler o CTL (ex.: `ERRO_CTL`),
+  quando o `cd_inst` é desconhecido, também usa `0`. No `ERRO`, a mensagem (`TIPO: motivo`) vai para
+  `DS_MNG_ERR_EXC`; só não chega ao Db2 quando o próprio Db2 está fora (`ERRO_DB2`, fica no log). O motor **recusa** qualquer comando que não seja `UPDATE` (MERGE, INSERT, DELETE) e mais de
   um comando por seção. A mensagem de erro vai com até `db2_mensagem_max` caracteres (padrão 500: ajuste ao
   tamanho de `DS_MNG_ERR_EXC`).
 - **Linha não encontrada:** `UPDATE` que atualiza 0 linhas = `ERRO_DB2` no arquivo ("não encontrou a linha do
-  objeto ... o motor não insere"), sem novas tentativas; mais de 1 linha é aceito.
+  objeto ... (cd_inst ...) ... o motor não insere"), sem novas tentativas; mais de 1 linha é aceito (com
+  `cd_inst = 1,3`, pelo menos uma das duas linhas precisa existir).
 - **Tempo-limite (`db2_timeout_s`, padrão 30 s):** a conexão usa `ConnectTimeout` e cada sessão `SET CURRENT LOCK
   TIMEOUT`. Rede bloqueada ou linha da controle presa por outra transação viram erro com a mensagem do Db2, com as
   novas tentativas de `db2_tentativas`, e depois `ERRO_DB2`, em vez de o job ficar esperando sem fim.
@@ -328,7 +336,8 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
 
 - `plhdwa_testar_controle_db2`: conecta (com o tempo-limite), confere a tabela e faz o `PREPARE` de cada `UPDATE`
   no Db2 (confere colunas e tipos) **sem gravar nada**. Com o parâmetro `objeto_teste` = um código combinado com o
-  DBA, executa de verdade o `UPDATE` de CONCLUIDO e depois o de ERRO nesse objeto (a linha fica como ERRO).
+  DBA, executa de verdade o `UPDATE` de CONCLUIDO e depois o de ERRO nesse objeto (a linha fica como ERRO);
+  `cd_inst_teste` (padrão `0`) simula o `cd_inst` do CTL, ex. `1,3`.
 - Arquivo real: copie um par DAT + CTL para `dados` e depois `ctl` (o CTL dispara). No S3:
   `aws s3 cp` (ou o próprio Netezza); `plhdwa_gerar_teste_tempo` também grava no S3 com `landing_tipo = S3`. Esperado: carga na
   tabela destino, `CONCLUIDO` em `v_status_arquivo`, linha `CONCLUIDO` na controle do Db2, arquivos apagados.

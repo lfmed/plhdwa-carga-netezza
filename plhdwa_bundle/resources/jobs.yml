@@ -292,6 +292,7 @@ resources:
       performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: objeto_teste, default: ""}   # vazio = não grava nada; um código = executa os UPDATE de verdade nele
+        - {name: cd_inst_teste, default: "0"}  # com objeto_teste: cd_inst do CTL simulado (ex.: 1,3); 0 = linha CD_INS = 0
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
         - {name: landing, default: "${var.landing}"}
