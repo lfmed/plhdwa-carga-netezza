@@ -1,5 +1,5 @@
 # =====================================================================================================
-# Jobs do PLHDWA. Todos serverless, com a tag OWNER, sem nova tentativa automática
+# Jobs do PLHDWA. Todos serverless, com as tags OWNER e NameDTBK (nome do job só com caracteres aceitos em tag: · vira -, sem acentos/parênteses), sem nova tentativa automática
 # (erro = objeto travado + alerta por e-mail; a retomada é feita pelo DESBLOQUEIO).
 # Os parâmetros de cada job vêm das variáveis do bundle (databricks.yml); a descrição de cada um está na
 # tabela PARAMETROS de src/plhdwa_motor.py. job_id e job_run_id vêm das referências dinâmicas do Jobs.
@@ -13,7 +13,8 @@ resources:
     # objetos JOB disparam os jobs de carga abaixo.
     plhdwa_despachante:
       name: PLHDWA · despachante
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - despachante"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: PERFORMANCE_OPTIMIZED
       max_concurrent_runs: 1
       queue: {enabled: true}
@@ -22,7 +23,7 @@ resources:
           url: ${var.landing}/${var.pasta_ctl}/
           min_time_between_triggers_seconds: ${var.gatilho_intervalo_s}
       email_notifications:
-        on_failure: ["${var.email_alertas}"]
+        on_failure: ${var.email_alertas}
       parameters:
         - {name: catalogo, default: "${var.catalogo}"}
         - {name: schema, default: "${var.schema}"}
@@ -88,12 +89,13 @@ resources:
     # recebido do despachante e segue com os próximos do mesmo objeto (até job_max_arquivos / job_max_minutos).
     plhdwa_carga_arquivo_perf:
       name: PLHDWA · carga arquivo · performance
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - carga arquivo - performance"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: PERFORMANCE_OPTIMIZED
       max_concurrent_runs: 100           # o limite efetivo é max_simult do modo JOB (ctl_execucao)
       queue: {enabled: true}
       email_notifications:
-        on_failure: ["${var.email_alertas}"]
+        on_failure: ${var.email_alertas}
       parameters: &parametros_carga
         - {name: ctl, default: ""}                 # passados pelo despachante no run_now
         - {name: modo, default: "JOB"}
@@ -148,12 +150,13 @@ resources:
     # Mesmo código, tipo Standard (mais barato; arranque mais lento): objetos com tipo_job = STANDARD na ctl_parametros
     plhdwa_carga_arquivo_std:
       name: PLHDWA · carga arquivo · standard
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - carga arquivo - standard"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: ${var.desempenho_job_std}
       max_concurrent_runs: 100
       queue: {enabled: true}
       email_notifications:
-        on_failure: ["${var.email_alertas}"]
+        on_failure: ${var.email_alertas}
       parameters: *parametros_carga
       environments: *ambiente_plhdwa
       tasks:
@@ -169,7 +172,8 @@ resources:
     # DESBLOQUEIO, que não gera arquivo novo e por isso não dispara o gatilho).
     plhdwa_vigia:
       name: PLHDWA · vigia
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - vigia"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: ${var.desempenho_vigia}
       max_concurrent_runs: 1
       schedule:
@@ -208,7 +212,8 @@ resources:
     # (sql/01_tabelas_operacionais.sql), grava os jobs em ctl_execucao, prepara a controle e dá os GRANTs.
     plhdwa_pos_deploy:
       name: PLHDWA · instalação e pós-deploy
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - instalacao e pos-deploy"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: PERFORMANCE_OPTIMIZED
       environments: *ambiente_plhdwa
       tasks:
@@ -236,7 +241,8 @@ resources:
     # Testes (opcionais; não rodam sozinhos)
     plhdwa_validar_testes:
       name: PLHDWA · validar testes
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - validar testes"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: manifesto, default: "${var.landing}/testes/manifesto_todos.csv"}
@@ -281,7 +287,8 @@ resources:
     # Conexão e comando da controle no Db2 (rodar antes da 1ª carga e a cada mudança de Db2/tabela/comando)
     plhdwa_testar_controle_db2:
       name: PLHDWA · testar controle Db2
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - testar controle Db2"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: objeto_teste, default: ""}   # vazio = não grava nada; um código = executa os UPDATE de verdade nele
@@ -322,7 +329,8 @@ resources:
 
     plhdwa_gerar_teste_tempo:
       name: PLHDWA · gerar arquivo grande (teste de tempo)
-      tags: {OWNER: "${var.owner_tag}"}
+      tags: {OWNER: "${var.owner_tag}", NameDTBK: "PLHDWA - gerar arquivo grande - teste de tempo"}
+      budget_policy_id: ${var.politica_serverless}
       performance_target: PERFORMANCE_OPTIMIZED
       parameters:
         - {name: landing, default: "${var.landing}"}

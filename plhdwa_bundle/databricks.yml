@@ -238,8 +238,14 @@ variables:
   grupo_owner:
     description: Usuário/grupo dono da operação (escrita em ctl_execucao, desbloqueio). Vazio = quem fez o deploy
     default: ""
+  politica_serverless:
+    description: >-
+      Id da política serverless (budget policy) aplicada a todos os jobs, para as tags de custo saírem nos recursos.
+      Vazio = política padrão do workspace. O run_as precisa ter permissão de uso na política.
+    default: ""
   email_alertas:
-    description: E-mail que recebe as falhas dos jobs
+    description: Lista de e-mails que recebem as falhas dos jobs, por exemplo [a@cliente.com, b@cliente.com]
+    type: complex
 
 targets:
   # Modelos: troque o host e os valores <...>. Rode sempre com -t <target>.
@@ -258,7 +264,8 @@ targets:
       db2_porta: "<porta>"
       db2_banco: <banco_db2>
       db2_tabela: <SCHEMA>.<TABELA_CONTROLE>
-      email_alertas: <email@cliente>
+      email_alertas: [<email@cliente>]
+      politica_serverless: <id_politica_serverless>
       db2_espera_base_s: "5"          # testes mais rápidos
 
   hml:
@@ -274,7 +281,8 @@ targets:
       db2_porta: "<porta>"
       db2_banco: <banco_db2>
       db2_tabela: <SCHEMA>.<TABELA_CONTROLE>
-      email_alertas: <email@cliente>
+      email_alertas: [<email@cliente>]
+      politica_serverless: <id_politica_serverless>
 
   prd:
     mode: production
@@ -291,4 +299,5 @@ targets:
       db2_banco: <banco_db2>
       db2_tabela: <SCHEMA>.<TABELA_CONTROLE>
       grupo_owner: <grupo_owner_prd>
-      email_alertas: <email@cliente>
+      email_alertas: [<email@cliente>]
+      politica_serverless: <id_politica_serverless>

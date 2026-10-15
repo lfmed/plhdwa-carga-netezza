@@ -113,7 +113,7 @@ O pós-deploy é idempotente: rode depois de **todo** deploy.
 | Controle (Db2) | `usar_db2` (`sim` · `nao` = não executa nenhuma etapa do Db2), `db2_modo` (`DB2` · `SIMULADO` só para testes), `db2_host`, `db2_porta`, `db2_banco`, `db2_ssl`, `db2_certificado`, `db2_extra`, `db2_secret_scope`, `db2_chave_usuario`, `db2_chave_senha`, `db2_tabela`, `db2_comando`, `db2_tentativas`, `db2_espera_base_s`, `db2_timeout_s`, `db2_mensagem_max` |
 | Execução | `max_simult_despachante`, `max_simult_job` (vagas iniciais), `ciclo_s`, `max_horas`, `max_threads`, `job_max_arquivos`, `job_max_minutos`, `precheck_linhas`, `precheck_min_mb`, `gatilho_intervalo_s`, `vigia_cron`, `vigia_parado_min`, `vigia_retry_espera_s`, `mover_invalido_min`, `desempenho_vigia` e `desempenho_job_std` (serverless `STANDARD`, padrão, ou `PERFORMANCE_OPTIMIZED`) |
 | Identidade | `svc_hash` (application ID do service principal: pasta do bundle e `run_as` dos jobs) |
-| Governança | `owner_tag`, `grupo_owner`, `email_alertas` |
+| Governança | `owner_tag`, `grupo_owner`, `email_alertas` (lista), `politica_serverless` |
 | Só no modo SIMULADO | `lakebase_instance`, `lakebase_database`, `lakebase_tabela` |
 
 Ajustes **sem deploy**, feitos pelo owner:
