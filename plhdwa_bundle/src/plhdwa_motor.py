@@ -30,6 +30,7 @@ from pyspark.sql import types as T
 # (o grupo é o 1º segmento depois do código, só para visualização; a carga olha só o código)
 RX_NOME = re.compile(r"^(\d+)_(.+)_(\d{8})_(\d{14})\.(dat|ctl)$", re.IGNORECASE)   # extensão em qualquer caixa
 MODOS = ("DESPACHANTE", "JOB")
+ENCODING_PADRAO = "UTF-8"     # coluna encoding vazia na ctl_parametros (até 20/10/2026: ISO-8859-15)
 
 # Contexto da execução (preenchido por iniciar()). É lido por todas as threads, e só o cache muda.
 CTX = {}
@@ -92,7 +93,11 @@ PARAMETROS = {
                                                "aceitar); false = o Db2 só recebe o fim: CONCLUIDO ou ERRO"),
     # --- leitura ---
     "limpeza_pedaco_mb":  ("0",                "modo CLIENTE: tamanho (MB) dos pedaços do arquivo lidos por tarefa; 0 = padrão do "
-                                               "Spark. 4 deixa os pedaços iguais com qualquer nº de núcleos, mas medido ~2x mais lento"),
+                                               "Spark (no serverless há um piso de ~16 MB: valores menores dão o mesmo)"),
+    "limpeza_estavel_mb": ("2048",             "modo CLIENTE: arquivos até este tamanho (MB) gravam antes a posição de cada linha "
+                                               "(pasta_tmp/<arquivo>/_posicoes) e as passadas leem dessa cópia: não dependem da "
+                                               "divisão do Spark, que muda com o nº de núcleos. Maiores: só na nova tentativa, "
+                                               "se a divisão mudar entre as passadas. 0 = só na nova tentativa"),
     "limpeza_dat":        ("true",             "true = antes da carga, limpa o DAT com as regex do cliente e grava o arquivo "
                                                "limpo em pasta_tmp (apagado no fim); false = lê o DAT direto. Cada tabela "
                                                "pode sobrepor com a coluna limpeza da ctl_parametros"),
@@ -124,7 +129,7 @@ PARAMETROS = {
 
 # Parâmetros que todo notebook do motor recebe (os específicos de cada um vêm somados a esta lista)
 COMUNS = ["catalogo", "schema", "landing", "landing_tipo", "pasta_dat", "pasta_ctl", "pasta_erro",
-          "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb",
+          "pasta_tmp", "fuso_horario", "limpeza_dat", "limpeza_pedaco_mb", "limpeza_estavel_mb",
           "mover_invalido_min", "listagem_espera_s", "usar_db2", "db2_modo", "db2_host", "db2_porta", "db2_banco", "db2_ssl", "db2_certificado", "db2_extra",
           "db2_secret_scope",
           "db2_chave_usuario", "db2_chave_senha", "db2_tabela", "db2_comando", "db2_max_conexoes", "db2_tentativas",
@@ -628,7 +633,7 @@ def _leitura(arq, meta):
                  quote=_p(meta, "limpeza_quote", "'"), escape="\\", encoding="UTF-8",
                  lineSep="\n")                   # CR do dado (escapado no Netezza) não é fim de linha
         return arq["dat_limpo"], o
-    o.update(header=_p(meta, "header", "true"), encoding=_p(meta, "encoding", "ISO-8859-15"), quote=_p(meta, "quote"))
+    o.update(header=_p(meta, "header", "true"), encoding=_p(meta, "encoding", ENCODING_PADRAO), quote=_p(meta, "quote"))
     return arq["dat"], o
 
 
@@ -652,7 +657,7 @@ def ler_dat_escape(arq, meta):
     e, d, marca = re.escape(esc), re.escape(sep), "\u0002"
     # Lê cada linha inteira como uma coluna (separador improvável), respeitando o encoding.
     linhas = (CTX["spark"].read.format("csv").schema("linha STRING").option("sep", "\u0001").option("quote", "")
-              .option("encoding", _p(meta, "encoding", "ISO-8859-15")).option("header", "false").load(arq["dat"]))
+              .option("encoding", _p(meta, "encoding", ENCODING_PADRAO)).option("header", "false").load(arq["dat"]))
     if _p(meta, "header", "true") == "true":
         linhas = linhas.filter(F.col("linha") != ler_header(arq))
     campos = F.split(F.regexp_replace("linha", e + e, marca), f"(?<!{e}){d}", -1)   # | não escapado
@@ -728,7 +733,7 @@ def _linhas_limpas(arq, meta, tirar_header, regex=True, bloco=False):
     # como "\\<CR>": sem isso, o registro seria cortado e o CR do dado viraria LF. CR no fim da linha (arquivo CRLF)
     # e não escapado sai.
     linhas = (CTX["spark"].read.format("csv").schema("value STRING").option("sep", "\u0001").option("quote", "")
-              .option("header", "false").option("lineSep", "\n").option("encoding", _p(meta, "encoding", "ISO-8859-15"))
+              .option("header", "false").option("lineSep", "\n").option("encoding", _p(meta, "encoding", ENCODING_PADRAO))
               .load(arq["dat"]))
     if bloco:                                         # início do pedaço do arquivo que cada tarefa leu (ordem no arquivo)
         linhas = linhas.select("value", F.col("_metadata.file_block_start").alias("_bloco"))
@@ -777,29 +782,46 @@ def preparar_cliente(arq, meta, destino, tentativas=3):
         passada em paralelo resume cada pedaço (1ª e última linha com aspa aberta, quantidade); o driver encadeia
         os pedaços na ordem do arquivo e acha esses registros (no máximo 1 por fronteira); eles saem das partes e
         são gravados inteiros numa parte a mais. Nada é reordenado e nenhuma linha se perde.
-    As passadas são jobs Spark separados: os pedaços do arquivo precisam ser os mesmos em todas. O motor confere:
-    todas as linhas da fronteira achadas antes de gravar, e nº de partes gravadas = nº de pedaços (opcional:
-    limpeza_pedaco_mb fixa o tamanho do pedaço, ao custo de ~2x no tempo).
-    Se não conferir, apaga a tmp e refaz (até 'tentativas'); se ainda assim não conferir, para sem gravar nada."""
+    As passadas são jobs Spark separados: os pedaços do arquivo precisam ser os mesmos em todas. No serverless a
+    divisão de um arquivo pequeno muda com o nº de núcleos do momento (e não dá para fixá-la: openCostInBytes e
+    minPartitionNum não são aceitos). Por isso, em arquivos até limpeza_estavel_mb, a posição de cada linha é gravada
+    UMA vez (parquet em <destino>/_posicoes) e as passadas leem dessa cópia (estavel). Nos maiores a divisão é a de
+    128 MB, que não muda: lê direto e confere (todas as linhas da fronteira achadas antes de gravar, e nº de partes
+    gravadas = nº de pedaços); se não conferir, apaga a tmp e refaz já com as posições gravadas (até 'tentativas')."""
     if int(CTX["limpeza_pedaco_mb"] or 0) > 0:      # opcional: a conferência abaixo já cobre pedaços que mudem
         CTX["spark"].conf.set("spark.sql.files.maxPartitionBytes", f"{int(CTX['limpeza_pedaco_mb'])}m")
+    limite = float(CTX.get("limpeza_estavel_mb") or 0) * 1024 * 1024
+    estavel = limite > 0 and _tamanho(arq["dat"]) <= limite
     for t in range(tentativas):
         try:
-            return _preparar_cliente(arq, meta, destino) + (f" (tentativa {t + 1})" if t else "")
+            return _preparar_cliente(arq, meta, destino, estavel) + (f" (tentativa {t + 1})" if t else "")
         except _LayoutMudou as e:
-            print(f"modo CLIENTE: {e}; refazendo a limpeza")
+            print(f"modo CLIENTE: {e}; refazendo a limpeza com as posições gravadas")
             CTX["dbutils"].fs.rm(destino, True)
+            estavel = True
     raise ErroCarga("ERRO_EXECUCAO", f"modo CLIENTE: os pedaços do arquivo mudaram entre as passadas em {tentativas} "
                                      "tentativas", mover=False)
 
 
-def _preparar_cliente(arq, meta, destino):
+def _tamanho(caminho):
+    try:
+        return CTX["dbutils"].fs.ls(caminho)[0].size
+    except Exception:
+        return 0
+
+
+def _preparar_cliente(arq, meta, destino, estavel=False):
     df = _linhas_posicionadas(arq, meta)
+    posicoes = f"{destino}/_posicoes"                 # começa com "_": o Spark não lê ao ler a pasta do arquivo limpo
+    if estavel:                                       # posições gravadas uma vez: as passadas abaixo leem a cópia
+        CTX["dbutils"].fs.rm(destino, True)
+        df.write.mode("overwrite").parquet(posicoes)
+        df = CTX["spark"].read.parquet(posicoes)
     resumo = sorted((df.groupBy("_bloco").agg(
         F.min("_pos").alias("ini"), F.max("_pos").alias("fim"), F.sum("_impar").alias("impares"),
         F.min(F.when(F.col("_impar") == 1, F.col("_pos"))).alias("pri_impar"),
         F.max(F.when(F.col("_impar") == 1, F.col("_pos"))).alias("ult_impar")).collect()), key=lambda r: r["_bloco"])
-    if any(int(r["ini"]) != 0 for r in resumo):       # uma tarefa leu mais de um pedaço: a posição não é confiável
+    if not estavel and any(int(r["ini"]) != 0 for r in resumo):   # uma tarefa leu mais de um pedaço: posição não confiável
         raise _LayoutMudou("uma tarefa leu mais de um pedaço do arquivo")
     faixas, aberto, total_impares = [], False, 0
     for i, r in enumerate(resumo):
@@ -823,14 +845,21 @@ def _preparar_cliente(arq, meta, destino):
         for j in range(0, len(faixas), 2):            # cada par de faixas = 1 registro (início + continuação)
             partes = [linhas_f[(b, p)] for b, a, z in faixas[j:j + 2] for p in range(int(a), int(z) + 1)]
             registros.append(("\n".join(partes),))    # o registro inteiro num valor só: a ordem das linhas fica garantida
-    df.filter(~fronteira).select("value").write.mode("overwrite").text(destino)
-    gravadas = len([f for f in CTX["dbutils"].fs.ls(destino) if f.name.startswith("part-")])
-    if gravadas != len(resumo):
-        raise _LayoutMudou(f"{gravadas} parte(s) gravada(s) para {len(resumo)} pedaço(s) analisado(s)")
+    if estavel:
+        # Cada parte com pedaços inteiros, na ordem das linhas: nenhum registro (os da fronteira saíram) fica cortado
+        (df.filter(~fronteira).repartition(max(len(resumo), 1), "_bloco").sortWithinPartitions("_bloco", "_pos")
+           .select("value").write.mode("append").text(destino))
+        CTX["dbutils"].fs.rm(posicoes, True)
+    else:
+        df.filter(~fronteira).select("value").write.mode("overwrite").text(destino)
+        gravadas = len([f for f in CTX["dbutils"].fs.ls(destino) if f.name.startswith("part-")])
+        if gravadas != len(resumo):
+            raise _LayoutMudou(f"{gravadas} parte(s) gravada(s) para {len(resumo)} pedaço(s) analisado(s)")
     if registros:
         CTX["spark"].createDataFrame(registros, "value STRING").write.mode("append").text(destino)
     return (f"CLIENTE: {len(resumo)} parte(s) em paralelo, {total_impares} linha(s) com aspa aberta, "
-            f"{len(registros)} registro(s) na fronteira entre partes reunido(s)")
+            f"{len(registros)} registro(s) na fronteira entre partes reunido(s)"
+            + ("; posições gravadas" if estavel else ""))
 
 
 def _schema_ddl(meta, extra=None):

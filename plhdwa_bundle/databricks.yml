@@ -192,10 +192,16 @@ variables:
     default: "true"
   limpeza_pedaco_mb:
     description: >-
-      Modo CLIENTE da limpeza: tamanho (MB) dos pedaços do arquivo lidos por tarefa. "0" (padrão) = o do Spark; o motor
-      confere que os pedaços não mudaram entre as passadas e refaz se mudaram. "4" fixa os pedaços com qualquer número
-      de núcleos, mas foi medido cerca de 2x mais lento.
+      Modo CLIENTE da limpeza: tamanho (MB) dos pedaços do arquivo lidos por tarefa. "0" (padrão) = o do Spark. No
+      serverless há um piso de ~16 MB (valores menores dão o mesmo); pedaços pequenos deixam o arquivo grande ~2x mais lento.
     default: "0"
+  limpeza_estavel_mb:
+    description: >-
+      Modo CLIENTE da limpeza: arquivos até este tamanho (MB) gravam antes a posição de cada linha (parquet em
+      pasta_tmp/<arquivo>/_posicoes) e as passadas leem dessa cópia, sem depender da divisão do arquivo pelo Spark (que
+      muda com o número de núcleos do serverless e dava ERRO_EXECUCAO "os pedaços do arquivo mudaram"). Maiores: leem
+      direto e só usam a cópia na nova tentativa, se a divisão mudar. "0" = só na nova tentativa.
+    default: "2048"
   precheck_linhas:
     description: Linhas lidas na pré-checagem (header, tipos, detector de formato)
     default: "10000"

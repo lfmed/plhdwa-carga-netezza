@@ -31,8 +31,8 @@ MAPA_TIPOS = {
 }
 
 # Padrões do Netezza quando a opção não aparece no USING.
-# Encoding 'internal' do Netezza para CHAR/VARCHAR = LATIN9 (ISO-8859-15).
-PADROES_NETEZZA = {"delim": "|", "includeheader": "false", "encoding": "ISO-8859-15",
+# Sem ENCODING no USING: UTF-8 (padrão do projeto desde 20/10/2026; antes, o 'internal' do Netezza, LATIN9).
+PADROES_NETEZZA = {"delim": "|", "includeheader": "false", "encoding": "UTF-8",
                    "escapechar": "", "quotedvalue": "NO"}
 
 

@@ -59,6 +59,7 @@ resources:
         - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
         - {name: limpeza_dat, default: "${var.limpeza_dat}"}
         - {name: limpeza_pedaco_mb, default: "${var.limpeza_pedaco_mb}"}
+        - {name: limpeza_estavel_mb, default: "${var.limpeza_estavel_mb}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
         - {name: ciclo_s, default: "${var.ciclo_s}"}
@@ -136,6 +137,7 @@ resources:
         - {name: db2_registrar_inicio, default: "${var.db2_registrar_inicio}"}
         - {name: limpeza_dat, default: "${var.limpeza_dat}"}
         - {name: limpeza_pedaco_mb, default: "${var.limpeza_pedaco_mb}"}
+        - {name: limpeza_estavel_mb, default: "${var.limpeza_estavel_mb}"}
         - {name: precheck_linhas, default: "${var.precheck_linhas}"}
         - {name: precheck_min_mb, default: "${var.precheck_min_mb}"}
       environments: *ambiente_plhdwa

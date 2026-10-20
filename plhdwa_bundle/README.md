@@ -159,7 +159,7 @@ layout: colunas, ordem e tipos.
 | Destino | `catalogo_destino`, `schema_destino`, `tabela_destino` | obrigatório |
 | Carga | `filtrotabela` (`SIM` = REPLACE WHERE pela data de movimento + nr_cpr do CTL · `NAO` = substitui a tabela inteira), `nomecolunatempo` (coluna da data), `nomecolunainstituicao` (coluna comparada com o nr_cpr do CTL) | `SIM` exige `nomecolunatempo`; `nomecolunainstituicao` vazia = `NR_CPR` |
 | Execução | `execucao` (`DESPACHANTE` · `JOB`), `tipo_job` (`PERFORMANCE_OPTIMIZED` · `STANDARD`), `ativo` | `DESPACHANTE`, `PERFORMANCE_OPTIMIZED`, `true` |
-| Formato do arquivo | `delimitador`, `encoding`, `header`, `escape`, `quote`, `null_value`, `date_format`, `timestamp_format` | `\|`, `ISO-8859-15`, `true`, sem, sem, vazio, `yyyy-MM-dd`, `yyyy-MM-dd HH:mm[:ss]` |
+| Formato do arquivo | `delimitador`, `encoding`, `header`, `escape`, `quote`, `null_value`, `date_format`, `timestamp_format` | `\|`, `UTF-8`, `true`, sem, sem, vazio, `yyyy-MM-dd`, `yyyy-MM-dd HH:mm[:ss]` |
 | Limpeza (5b) | `limpeza`, `limpeza_modo`, `limpeza_quote` | variável `limpeza_dat`, `CLIENTE`, `'` |
 | Informativo | `tabela_origem` (Netezza), `observacao`, `alterado_por`, `alterado_em` | — |
 
@@ -212,7 +212,7 @@ Sem a primeira linha, o `CLUSTER BY` falha com `DELTA_CLUSTERING_COLUMN_MISSING_
 
 Com `limpeza_dat = true` (padrão), cada DAT passa por esta etapa antes da carga (`preparar_dat` no motor):
 
-1. lido linha a linha **com o encoding do objeto** (coluna `encoding` da `ctl_parametros`, LATIN9 do Netezza);
+1. lido linha a linha **com o encoding do objeto** (coluna `encoding` da `ctl_parametros`; vazia = UTF-8, desde 20/10/2026 — antes, ISO-8859-15);
 2. as 3 regex do cliente, nesta ordem (as mesmas do código recebido, em `_RX_LIMPEZA`):
    `r'\\(?![\\\'"|nrt])'` → vazio (barra que não escapa nada sai) · `r'\\\|'` → `|` · `r'\\null'` → vazio (NULL);
 3. gravado em `<landing>/<pasta_tmp>/<nome do arquivo>/` e lido para a carga com header, delimitador da tabela,
@@ -249,9 +249,13 @@ Comparativo (ponta a ponta pelo motor, landing no S3; detalhes na documentação
 | 80 GB com multilinha (5.633.850 registros em mais de uma linha) | — | falhou (ordem) | **338 s** (14,2 GB/min), 640 partes, 2 registros da fronteira reunidos, 1.126.770.000/1.126.770.000 |
 | 80 GB com + 80 GB sem, liberados juntos | — | — | **457 s** para os 160 GB (364 s e 354 s cada), tudo confere |
 
-Partes fixas (`limpeza_pedaco_mb`, padrão `0` = divisão do Spark) são opcionais: com 4 MB o 5 GB levou 198 s (cerca de
-2× mais lento). Com qualquer divisão, antes de gravar o motor confere se as linhas da fronteira e o número de partes são
-os esperados; se não, refaz (até 3 vezes) e, persistindo, para sem gravar.
+As passadas da limpeza são jobs Spark separados e precisam ver os mesmos pedaços do arquivo. No serverless, a divisão
+de um arquivo pequeno muda com o número de núcleos do momento e não pode ser fixada (só `maxPartitionBytes` é aceito, e
+ele tem um piso de ~16 MB). Por isso, arquivos até `limpeza_estavel_mb` (padrão 2048) gravam antes a posição de cada
+linha em `pasta_tmp/<arquivo>/_posicoes` (parquet, apagado no fim) e as passadas leem dessa cópia (decisão 32). Os
+maiores leem direto (a divisão de 128 MB não muda); o motor confere se as linhas da fronteira e o número de partes são
+os esperados e, se não, refaz já com as posições gravadas (até 3 vezes). `limpeza_pedaco_mb` (padrão `0`) continua
+opcional: pedaços pequenos deixaram o 5 GB cerca de 2× mais lento (198 s).
 
 Outras colunas da `ctl_parametros`: `limpeza` (liga/desliga a limpeza só para o objeto) e `limpeza_quote`
 (aspas dos textos; padrão `'`). Detalhes da leitura: fim de linha = LF (o CR escapado do Netezza, `\<CR>`, é dado

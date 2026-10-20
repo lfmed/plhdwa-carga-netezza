@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.ctl_parametros (
   tipo_job          STRING  NOT NULL DEFAULT 'PERFORMANCE_OPTIMIZED' COMMENT 'modo JOB: PERFORMANCE_OPTIMIZED | STANDARD',
   ativo             BOOLEAN NOT NULL DEFAULT true COMMENT 'false = os arquivos do objeto ficam parados na pasta de CTL',
   delimitador       STRING           COMMENT 'arquivo: separador de campos (NULL = |)',
-  encoding          STRING           COMMENT 'arquivo: encoding (NULL = ISO-8859-15)',
+  encoding          STRING           COMMENT 'arquivo: encoding (NULL = UTF-8)',
   header            BOOLEAN          COMMENT 'arquivo: 1ª linha é o cabeçalho (NULL = true)',
   escape            STRING           COMMENT 'arquivo: caractere de escape (NULL = sem)',
   quote             STRING           COMMENT 'arquivo: aspas dos textos (NULL = sem)',
