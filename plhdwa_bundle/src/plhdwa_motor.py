@@ -791,7 +791,8 @@ def preparar_cliente(arq, meta, destino, tentativas=3):
     if int(CTX["limpeza_pedaco_mb"] or 0) > 0:      # opcional: a conferência abaixo já cobre pedaços que mudem
         CTX["spark"].conf.set("spark.sql.files.maxPartitionBytes", f"{int(CTX['limpeza_pedaco_mb'])}m")
     limite = float(CTX.get("limpeza_estavel_mb") or 0) * 1024 * 1024
-    estavel = limite > 0 and _tamanho(arq["dat"]) <= limite
+    tamanho = arq.get("tamanho")                      # da validação do CTL; desconhecido = caminho direto
+    estavel = limite > 0 and tamanho is not None and tamanho <= limite
     for t in range(tentativas):
         try:
             return _preparar_cliente(arq, meta, destino, estavel) + (f" (tentativa {t + 1})" if t else "")
@@ -801,13 +802,6 @@ def preparar_cliente(arq, meta, destino, tentativas=3):
             estavel = True
     raise ErroCarga("ERRO_EXECUCAO", f"modo CLIENTE: os pedaços do arquivo mudaram entre as passadas em {tentativas} "
                                      "tentativas", mover=False)
-
-
-def _tamanho(caminho):
-    try:
-        return CTX["dbutils"].fs.ls(caminho)[0].size
-    except Exception:
-        return 0
 
 
 def _preparar_cliente(arq, meta, destino, estavel=False):
@@ -847,7 +841,7 @@ def _preparar_cliente(arq, meta, destino, estavel=False):
             registros.append(("\n".join(partes),))    # o registro inteiro num valor só: a ordem das linhas fica garantida
     if estavel:
         # Cada parte com pedaços inteiros, na ordem das linhas: nenhum registro (os da fronteira saíram) fica cortado
-        (df.filter(~fronteira).repartition(max(len(resumo), 1), "_bloco").sortWithinPartitions("_bloco", "_pos")
+        (df.filter(~fronteira).repartitionByRange(max(len(resumo), 1), "_bloco").sortWithinPartitions("_bloco", "_pos")
            .select("value").write.mode("append").text(destino))
         CTX["dbutils"].fs.rm(posicoes, True)
     else:
@@ -1572,6 +1566,7 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
     try:
         meta = metadados(arq["cod"])                    # ERRO_CADASTRO se a ctl_parametros não bate com o destino
         insts, cprs, tamanho = validar_ctl(arq, _p(meta, "header", "true") == "true")   # insts: só para a controle
+        arq["tamanho"] = tamanho                        # limpeza: escolhe o caminho estável (limpeza_estavel_mb)
         qtd_anterior, ja_carregado, ultima = info_arquivo(arq)
 
         # 1) controle: este arquivo começou. Só com db2_registrar_inicio = true: aí, sem o início gravado, não

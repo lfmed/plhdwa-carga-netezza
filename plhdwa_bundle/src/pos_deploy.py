@@ -94,6 +94,8 @@ for c in [c for c in comandos if c]:
     print(c.splitlines()[0][:120])
     spark.sql(c)
 print(f"{len([c for c in comandos if c])} comandos executados em {P['catalogo']}.{P['schema']}")
+# Tabela já existente: o CREATE IF NOT EXISTS não muda comentário (encoding vazio = UTF-8 desde 20/10/2026)
+spark.sql(f"ALTER TABLE {fq('ctl_parametros')} ALTER COLUMN encoding COMMENT 'arquivo: encoding (NULL = UTF-8)'")
 
 # COMMAND ----------
 

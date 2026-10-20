@@ -63,6 +63,9 @@ def ler_opcoes_using(ddl):
     opcoes = dict(PADROES_NETEZZA)
     for chave, valor in re.findall(r"([A-Za-z]+)\s*(?:\(\s*)?'([^']*)'", bloco):
         opcoes[chave.lower()] = valor
+    if not re.search(r"\bENCODING\b", bloco, re.I):
+        print("aviso: a DDL não traz ENCODING; o objeto vai com encoding UTF-8 (arquivo em LATIN9 precisa de "
+              "encoding = 'ISO-8859-15' na ctl_parametros, senão os acentos saem trocados)", file=sys.stderr)
     return opcoes
 
 
