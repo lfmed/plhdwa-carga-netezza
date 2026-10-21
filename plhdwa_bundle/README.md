@@ -372,5 +372,7 @@ Pontos do próprio código do cliente para confirmar (teste funcional, `implanta
   pago uma vez por objeto.
 - **Carga** sempre com `replaceWhere` (`filtrotabela = NAO` usa `1 = 1`), para gravar só os dados e preservar a tag `OWNER`,
   as propriedades e os grants da tabela. Destino, colunas do `replaceWhere` e formato vêm da `ctl_parametros`.
-- **DAT vazio** (0 bytes, só header ou em branco) = `ERRO_DAT_VAZIO`, antes da carga.
+- **DAT vazio** (0 bytes ou em branco) = `ERRO_DAT_VAZIO`, antes da carga. **Só o cabeçalho** é normal (decisão 34):
+  CONCLUIDO com 0 registros, controle CONCLUIDO e a tabela substituída por vazio (`SIM`: a data × nr_cpr do CTL; `NAO`:
+  a tabela inteira). O cabeçalho ainda é conferido (`ERRO_SCHEMA`).
 - **Sem nova tentativa automática** nos jobs: erro = objeto travado + e-mail; outros objetos seguem.

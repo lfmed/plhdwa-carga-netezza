@@ -986,7 +986,8 @@ def ler_conteudo_ctl(texto, arq):
 
 
 def validar_ctl(arq, meta_header=True):
-    """Conteúdo do CTL x nome do arquivo + DAT presente e não vazio. Devolve (instituições, nr_cpr, tamanho do DAT)."""
+    """Conteúdo do CTL x nome do arquivo + DAT presente e não vazio. Devolve (instituições, nr_cpr, tamanho do DAT).
+    DAT só com o cabeçalho = arq["sem_registros"] (situação normal: substitui por vazio, decisão 34)."""
     try:
         texto = CTX["dbutils"].fs.head(arq["ctl"])
     except Exception as e:
@@ -998,14 +999,16 @@ def validar_ctl(arq, meta_header=True):
         tamanho = None
     if tamanho is None:
         raise ErroCarga("ERRO_PAR", f"CTL sem o DAT {arq['nome_dat']} (procurado com a extensão em qualquer caixa)")
-    # DAT em branco = erro. Precisa ser ANTES da carga: um REPLACE WHERE com 0 linhas apagaria a data inteira.
+    # DAT com 0 bytes ou em branco = erro (pode ser falha na exportação ou na cópia), ANTES da carga: um REPLACE
+    # WHERE com 0 linhas apagaria a data inteira. Só o cabeçalho é normal (decisão 34): o dia não teve registros.
     if tamanho == 0:
         raise ErroCarga("ERRO_DAT_VAZIO", f"DAT {arq['nome_dat']} com 0 bytes")
     inicio = CTX["dbutils"].fs.head(arq["dat"], 65536)
     linhas = [l for l in inicio.split("\n") if l.strip()]
-    if len(linhas) < (2 if meta_header else 1):
-        raise ErroCarga("ERRO_DAT_VAZIO", f"DAT {arq['nome_dat']} sem registros (só o header)" if linhas
-                        else f"DAT {arq['nome_dat']} em branco")
+    if not linhas:
+        raise ErroCarga("ERRO_DAT_VAZIO", f"DAT {arq['nome_dat']} em branco")
+    # 1 linha no arquivo inteiro (cabe no trecho lido): só o cabeçalho. Maior que o trecho: segue a carga normal.
+    arq["sem_registros"] = meta_header and len(linhas) == 1 and tamanho <= 65536
     return insts, cprs, tamanho
 
 
@@ -1041,20 +1044,26 @@ def validacoes_fato(df, meta, arq, cprs):
 _detector_feito = set()
 
 
+def conferir_header(arq, meta):
+    """Header do DAT x colunas da tabela (nome e ordem): ERRO_SCHEMA se não bater. Sem header, não confere."""
+    if _p(meta, "header", "true") != "true":
+        return
+    header = [c.strip().upper() for c in ler_header(arq).split(_p(meta, "delimitador", "|"))]
+    esperado = [f.name.upper() for f in meta["schema"].fields]
+    if header != esperado:
+        novas = [c for c in header if c not in esperado]
+        faltam = [c for c in esperado if c not in header]
+        raise ErroCarga("ERRO_SCHEMA", f"header diferente da tabela {meta['tabela']}: "
+                                       f"novas={novas[:10]} faltando={faltam[:10]} "
+                                       f"({len(header)} colunas no arquivo, {len(esperado)} na tabela)")
+
+
 def precheck(arq, meta, cprs, tamanho, linhas=None):
     """Header x schema (sempre, é barato). A amostra (parâmetro precheck_linhas) + detector de formato custa uma
     leitura extra: roda em arquivos a partir de precheck_min_mb (erra cedo) e, nos menores, só no 1º arquivo de
     cada objeto por execução (nos pequenos a própria carga já valida tudo em FAILFAST, na mesma leitura)."""
     linhas = linhas or int(CTX["precheck_linhas"])
-    if _p(meta, "header", "true") == "true":
-        header = [c.strip().upper() for c in ler_header(arq).split(_p(meta, "delimitador", "|"))]
-        esperado = [f.name.upper() for f in meta["schema"].fields]
-        if header != esperado:
-            novas = [c for c in header if c not in esperado]
-            faltam = [c for c in esperado if c not in header]
-            raise ErroCarga("ERRO_SCHEMA", f"header diferente da tabela {meta['tabela']}: "
-                                           f"novas={novas[:10]} faltando={faltam[:10]} "
-                                           f"({len(header)} colunas no arquivo, {len(esperado)} na tabela)")
+    conferir_header(arq, meta)
     limite = float(CTX["precheck_min_mb"]) * 1024 * 1024
     with _trava_cache:
         primeiro = arq["cod"] not in _detector_feito
@@ -1137,8 +1146,9 @@ def classificar(e):
 # =============================================================================
 # 7. Carga atômica
 # =============================================================================
-def carregar(arq, meta, cprs):
-    """FATO: REPLACE WHERE data (+ nr_cpr do CTL). DIM: substitui tudo. Um único commit Delta."""
+def carregar(arq, meta, cprs, vazio=False):
+    """FATO: REPLACE WHERE data (+ nr_cpr do CTL). DIM: substitui tudo. Um único commit Delta.
+    vazio (DAT só com o cabeçalho): a mesma substituição, sem linhas: remove o que o predicado cobre."""
     t = meta["tabela"]
     if meta["tipo"] == "FATO":
         tipo_d = meta["schema"][meta["col_data"]].dataType
@@ -1151,7 +1161,11 @@ def carregar(arq, meta, cprs):
             predicado += f" AND {col_c} IN ({cprs})"
     else:
         predicado = "1 = 1"     # DIM: substitui a tabela inteira, mantendo tags, propriedades e grants
-    df = validacoes_fato(ler_dat(arq, meta), meta, arq, cprs)
+    if vazio:
+        removidas = sql(f"SELECT count(*) AS n FROM {t} WHERE {predicado}").first().n
+        df = CTX["spark"].createDataFrame([], meta["schema"])
+    else:
+        df = validacoes_fato(ler_dat(arq, meta), meta, arq, cprs)
     try:
         (df.write.format("delta").mode("overwrite").option("replaceWhere", predicado)
            .option("userMetadata", arq["nome_ctl"]).saveAsTable(t))
@@ -1160,6 +1174,8 @@ def carregar(arq, meta, cprs):
         raise ErroCarga(tipo, msg, mover=(tipo != "ERRO_EXECUCAO"))
     h = (sql(f"DESCRIBE HISTORY {t} LIMIT 10").filter(F.col("userMetadata") == arq["nome_ctl"])
          .orderBy(F.col("version").desc()).first())
+    if vazio:
+        return (h.version if h else None), 0, int(removidas)
     m = h.operationMetrics or {}
     # numOutputRows inclui as linhas só regravadas (numCopiedRows) dos arquivos tocados pelo REPLACE WHERE
     inseridas = int(m.get("numOutputRows", 0) or 0) - int(m.get("numCopiedRows", 0) or 0)
@@ -1589,12 +1605,19 @@ def processar_arquivo(arq, modo, tipo_job, roteado_ts=None):
             if ultima and arq["dt_ger"] <= ultima:
                 raise ErroCarga("ERRO_SEQUENCIA", f"geração {arq['dt_ger']} não é posterior à última carregada {ultima}")
             limpeza = None
-            if limpeza_ativa(meta):                     # pedido do cliente: limpa o DAT antes da carga
-                modo_l, t_limpeza, detalhe = preparar_dat(arq, meta)
-                limpeza = (f"limpeza do DAT em {t_limpeza:.1f} s (modo {modo_l}"
-                           + (f"; {detalhe}" if detalhe else "") + ")")
-            precheck(arq, meta, cprs, tamanho)
-            versao, inseridas, removidas = carregar(arq, meta, cprs)
+            if arq.get("sem_registros"):
+                # DAT só com o cabeçalho (decisão 34): normal. Confere o header e substitui por vazio (SIM: a data x
+                # nr_cpr do CTL; NAO: a tabela inteira), sem limpeza nem leitura
+                conferir_header(arq, meta)
+                versao, inseridas, removidas = carregar(arq, meta, cprs, vazio=True)
+                limpeza = f"DAT sem registros (só o cabeçalho): {removidas} linha(s) removida(s) de {meta['tabela']}"
+            else:
+                if limpeza_ativa(meta):                 # pedido do cliente: limpa o DAT antes da carga
+                    modo_l, t_limpeza, detalhe = preparar_dat(arq, meta)
+                    limpeza = (f"limpeza do DAT em {t_limpeza:.1f} s (modo {modo_l}"
+                               + (f"; {detalhe}" if detalhe else "") + ")")
+                precheck(arq, meta, cprs, tamanho)
+                versao, inseridas, removidas = carregar(arq, meta, cprs)
             carregou = True
             pend.append((arq, "CARREGADO", {**comum(), "instituicoes": insts, "nr_cpr": cprs, "inicio": inicio, "fim": time.time(),
                                             "ts": time.time(), "qtd_inserida": inseridas, "qtd_removida": removidas,
