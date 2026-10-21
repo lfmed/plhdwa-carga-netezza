@@ -24,6 +24,7 @@ Documentação funcional: `documentacao_carga_netezza_databricks.html` · Opera�
 | `src/vigia.py` | Religa o despachante se houver CTL parado (ex.: depois de um DESBLOQUEIO) |
 | `src/pos_deploy.py` | Instalação idempotente: tabelas/visões (inclusive a `ctl_parametros`), ids dos jobs, GRANTs, conferência do cadastro |
 | `src/testar_controle_db2.py` | Testa conexão, tabela e os comandos da controle no Db2 (PREPARE, sem gravar) |
+| `src/diagnosticar_aspas.py` | Notebook (sem job): acha num DAT, sem carregar, a linha com aspa solta que para a limpeza CLIENTE |
 | `sql/01_tabelas_operacionais.sql` | Tabelas e visões operacionais (executado pelo pós-deploy, com as variáveis) |
 | `sql/02_db2_controle_update.sql` | Comandos oficiais da controle (só `UPDATE`, um por status; editável pelo DBA) |
 | `sql/02_db2_controle_update_tabela_controle.sql` | Variante para uma tabela no layout `CONTROLE` genérico (testes) |

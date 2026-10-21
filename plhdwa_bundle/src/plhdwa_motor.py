@@ -772,13 +772,21 @@ def _linhas_limpas(arq, meta, tirar_header, regex=True, bloco=False):
     return _aplicar_regex(linhas) if regex else linhas
 
 
+def aspas_csv(meta, coluna="value"):
+    """Nº de aspas da linha que o leitor de CSV usa: a do começo de um campo (início da linha ou logo depois do
+    delimitador) e a do fim (antes do delimitador ou no fim da linha). As escapadas não contam (\\' e \\\\ saem antes).
+    Número ímpar = a linha abre ou fecha um texto entre aspas que continua em outra linha. Um apóstrofo no meio do
+    texto (D'AVILA) não conta: na contagem de todas as aspas ele parecia abrir um registro e a limpeza parava com
+    "registro com quebra de linha maior que um pedaço" (cliente, 21/10/2026, decisão 36)."""
+    q, s = re.escape(_p(meta, "limpeza_quote", "'")), re.escape(_p(meta, "delimitador", "|"))
+    v = F.regexp_replace(F.regexp_replace(F.col(coluna), r"\\\\", "\u0002\u0002"), r"\\" + q, "\u0002\u0002")
+    return F.size(F.split(v, f"(?<![^{s}]){q}|{q}(?![^{s}])")) - 1
+
+
 def linhas_com_aspa_aberta(arq, meta):
-    """Detecção (modo AUTO): linhas com número ímpar de aspas não escapadas = um registro continua na linha de baixo.
-    Uma contagem em paralelo no arquivo inteiro. Se errar, erra para o lado seguro (vai para MULTILINHA)."""
-    q = re.escape(_p(meta, "limpeza_quote", "'"))
-    aspas = F.size(F.split(F.col("value"), f"(?<!\\\\){q}")) - 1
-    return (_linhas_limpas(arq, meta, tirar_header=False)
-            .filter(F.col("value").contains(_p(meta, "limpeza_quote", "'")) & (aspas % 2 == 1)).count())
+    """Detecção (modo AUTO): linhas com número ímpar de aspas do CSV (aspas_csv) = um registro continua na linha de
+    baixo. Uma contagem em paralelo no arquivo inteiro. Se errar, erra para o lado seguro (vai para CLIENTE)."""
+    return _linhas_limpas(arq, meta, tirar_header=False).filter(aspas_csv(meta) % 2 == 1).count()
 
 
 def _linhas_posicionadas(arq, meta):
@@ -789,13 +797,11 @@ def _linhas_posicionadas(arq, meta):
     _pos NÃO é o monotonically_increasing_id puro: ele embute o número da tarefa, e o Spark pode dar outro número
     de tarefa ao mesmo pedaço em outra execução (visto no teste de 80 GB). Tirando a tarefa, sobra a ordem da linha
     dentro da tarefa, que é estável (num arquivo só, cada tarefa lê um pedaço; conferido em preparar_cliente)."""
-    q = _p(meta, "limpeza_quote", "'")
     linhas = (_linhas_limpas(arq, meta, tirar_header=True, regex=False, bloco=True)
               .withColumn("_pos", F.monotonically_increasing_id()
                           - F.spark_partition_id().cast("long") * F.lit(8589934592)))   # 2^33: sai a tarefa
     linhas = _aplicar_regex(linhas)
-    aspas = F.size(F.split(F.col("value"), f"(?<!\\\\){re.escape(q)}")) - 1
-    return linhas.withColumn("_impar", (F.col("value").contains(q) & (aspas % 2 == 1)).cast("int"))
+    return linhas.withColumn("_impar", (aspas_csv(meta) % 2 == 1).cast("int"))
 
 
 class _LayoutMudou(Exception):
@@ -832,6 +838,24 @@ def preparar_cliente(arq, meta, destino, tentativas=3):
                                      "tentativas", mover=False)
 
 
+def _texto_aberto_sem_fim(df, meta, resumo, i):
+    """Mensagem do ERRO_DADOS quando o pedaço i inteiro não fecha o texto aberto no pedaço anterior: a linha que abriu
+    (nº no arquivo, contando o header), o byte do pedaço e o texto (já com a regex do cliente). Quase sempre é uma aspa
+    solta (sem escape) nessa linha, e não um registro de mais de um pedaço."""
+    ant = resumo[i - 1]
+    linha = sum(int(r["fim"]) - int(r["ini"]) + 1 for r in resumo[:i - 1]) + int(ant["ult_impar"]) - int(ant["ini"]) + 1
+    linha += 1 if _p(meta, "header", "true") == "true" else 0
+    try:
+        texto = (df.filter((F.col("_bloco") == F.lit(ant["_bloco"])) & (F.col("_pos") == F.lit(ant["ult_impar"])))
+                 .select("value").first()[0])
+    except Exception as e:
+        texto = f"(não consegui ler a linha: {str(e)[:200]})"
+    return (f"registro com quebra de linha maior que um pedaço inteiro do arquivo: a linha {linha} (pedaço que começa no "
+            f"byte {ant['_bloco']}) abre um texto entre aspas que não fecha em nenhuma linha do pedaço seguinte (byte "
+            f"{resumo[i]['_bloco']} em diante). Provável aspa sem escape nessa linha (diagnóstico do arquivo inteiro: "
+            f"notebook diagnosticar_aspas). Linha: {(texto or '')[:500]}")
+
+
 def _preparar_cliente(arq, meta, destino, estavel=False):
     df = _linhas_posicionadas(arq, meta)
     posicoes = f"{destino}/_posicoes"                 # começa com "_": o Spark não lê ao ler a pasta do arquivo limpo
@@ -850,7 +874,7 @@ def _preparar_cliente(arq, meta, destino, estavel=False):
         total_impares += int(r["impares"] or 0)
         if aberto:                                    # o pedaço começa no meio de um registro do pedaço anterior
             if r["pri_impar"] is None:
-                raise ErroCarga("ERRO_DADOS", "registro com quebra de linha maior que um pedaço inteiro do arquivo")
+                raise ErroCarga("ERRO_DADOS", _texto_aberto_sem_fim(df, meta, resumo, i))
             faixas.append((resumo[i - 1]["_bloco"], resumo[i - 1]["ult_impar"], resumo[i - 1]["fim"]))   # início do registro
             faixas.append((r["_bloco"], r["ini"], r["pri_impar"]))                                    # continuação
         aberto = (int(aberto) + int(r["impares"] or 0)) % 2 == 1
