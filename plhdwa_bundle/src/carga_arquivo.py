@@ -30,9 +30,19 @@ if not arq:
 if m.ultimo_status(arq) == "CONCLUIDO":
     dbutils.notebook.exit("arquivo já concluído")
 if arq["cod"] in m.objetos_travados():
-    raise Exception(f"objeto {arq['cod']} está travado: ver v_objeto_travado (nada foi feito)")
+    raise Exception(f"objeto {arq['cod']} já estava travado (nada foi feito):" + m.resumo_travados(cod=arq["cod"]))
+
+
+def processar(a, roteado_ts=None):
+    """Erro no arquivo: a execução termina FAILED com o objeto travado (erro, arquivo e mensagem) na mensagem."""
+    try:
+        m.processar_arquivo(a, "JOB", P["tipo_job"], roteado_ts=roteado_ts)
+    except m.ErroCarga as e:
+        raise Exception(f"objeto {a['cod']} com erro:" + m.resumo_travados(cod=a["cod"])) from e
+
+
 inicio = time.time()
-m.processar_arquivo(arq, "JOB", P["tipo_job"])
+processar(arq)
 feitos = 1
 
 # Segue com o objeto: próximo arquivo pendente (inclui os que chegaram depois do disparo).
@@ -41,6 +51,6 @@ while feitos < int(P["max_arquivos"]) and time.time() - inicio < float(P["max_mi
     prox = m.pendentes(arq["cod"]).get(arq["cod"], [])
     if not prox:
         break
-    m.processar_arquivo(prox[0], "JOB", P["tipo_job"], roteado_ts=time.time())
+    processar(prox[0], roteado_ts=time.time())
     feitos += 1
 print(f"objeto {arq['cod']}: {feitos} arquivo(s) nesta execução")

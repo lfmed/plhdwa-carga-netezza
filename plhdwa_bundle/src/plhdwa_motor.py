@@ -396,6 +396,34 @@ def objetos_travados():
     return {r.cod_objeto for r in CTX["spark"].table(fq("v_objeto_travado")).select("cod_objeto").collect()}
 
 
+def resumo_travados(lote_id=None, cod=None, limite=20, msg_max=300):
+    """Objetos travados em texto, para a mensagem de erro do job (aparece no Jobs e no e-mail de falha).
+    lote_id: os que deram erro neste lote (erro, arquivo e mensagem) + quantos já estavam travados de antes.
+    cod: só esse objeto. Até 'limite' objetos; a mensagem de cada um é cortada em msg_max caracteres."""
+    try:
+        trav = {r.cod_objeto: r for r in CTX["spark"].table(fq("v_objeto_travado")).collect()}
+        if cod is not None:
+            alvo = [cod] if cod in trav else []
+        else:
+            do_lote = {r.cod_objeto for r in sql(f"""SELECT DISTINCT cod_objeto FROM {fq('log_carga_evento')}
+                                                     WHERE lote_id = :r AND status LIKE 'ERRO%'""",
+                                                  r=int(lote_id or 0)).collect()}
+            alvo = sorted(c for c in trav if c in do_lote)
+        linhas = [f"{c} {trav[c].erro} em {trav[c].arquivo_ctl}: {(trav[c].mensagem or '')[:msg_max]}" for c in alvo[:limite]]
+        if len(alvo) > limite:
+            linhas.append(f"+{len(alvo) - limite} outro(s) deste lote")
+        if cod is None:
+            antes = sorted(c for c in trav if c not in alvo)
+            if antes:
+                linhas.append(f"+{len(antes)} já travado(s) de antes: {', '.join(map(str, antes[:limite]))}"
+                              + (", ..." if len(antes) > limite else ""))
+        if not linhas:
+            return "(ver v_objeto_travado)"
+        return "\n- " + "\n- ".join(linhas) + "\n(ver v_objeto_travado; destravar com DESBLOQUEIO)"
+    except Exception as e:
+        return f"(ver v_objeto_travado; não consegui listar: {str(e)[:200]})"
+
+
 def pendentes(cod=None, diag=None):
     """CTLs da pasta de CTL ainda não concluídos, de objetos não travados nem inativos, agrupados por objeto e em ordem de geração.
     cod: só os desse objeto (usado pelo job independente para seguir com o próximo arquivo do mesmo objeto).

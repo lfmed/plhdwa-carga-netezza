@@ -232,4 +232,4 @@ if falha_listagem:
     raise falha_listagem
 if erros:
     # A execução termina FAILED para disparar a notificação; os outros objetos já foram processados.
-    raise Exception(f"{erros} objeto(s) com erro: ver v_objeto_travado")
+    raise Exception(f"{erros} objeto(s) com erro:" + m.resumo_travados(lote_id=int(P["lote_id"])))
