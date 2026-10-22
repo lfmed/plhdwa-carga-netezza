@@ -63,15 +63,15 @@ def n_linha(bloco, pos, ini):
     return antes[bloco] + int(pos) - int(ini) + 1 + header
 
 
-def simular(campo_imp, campo_pri, campo_ult):
+def simular(campo_imp, campo_pri, campo_ult, fim=True):
     """Encadeia os pedaços como a limpeza: devolve None (passa) ou (pedaço que abre, posição da linha que abre, início
-    do pedaço, byte do pedaço seguinte; None = o arquivo termina com o texto aberto)."""
+    do pedaço, byte do pedaço seguinte; None = o arquivo termina com o texto aberto, só com fim = True)."""
     aberto = False
     for i, r in enumerate(resumo):
         if aberto and r[campo_pri] is None:
             return resumo[i - 1]["_bloco"], resumo[i - 1][campo_ult], resumo[i - 1]["ini"], r["_bloco"]
         aberto = (int(aberto) + int(r[campo_imp] or 0)) % 2 == 1
-    if aberto:
+    if aberto and fim:
         return resumo[-1]["_bloco"], resumo[-1][campo_ult], resumo[-1]["ini"], None
     return None
 
@@ -79,15 +79,22 @@ def simular(campo_imp, campo_pri, campo_ult):
 print(f"{total} linha(s) de dados em {len(resumo)} pedaço(s)")
 print(f"linhas que abrem/fecham texto em várias linhas: regra atual {sum(int(r['impares'] or 0) for r in resumo)}"
       f" · regra antiga {sum(int(r['impares_antigo'] or 0) for r in resumo)}")
-for nome, campos in (("regra atual", ("impares", "pri", "ult")), ("regra antiga", ("impares_antigo", "pri_a", "ult_a"))):
-    s = simular(*campos)
+# a regra antiga nunca olhou o fim do arquivo (fim = False): a comparação mostra o que o código antigo faria
+for nome, campos, fim in (("regra atual", ("impares", "pri", "ult"), True),
+                          ("regra antiga", ("impares_antigo", "pri_a", "ult_a"), False)):
+    s = simular(*campos, fim=fim)
     if s is None:
         print(f"- {nome}: a limpeza passa (todo texto aberto fecha no pedaço seguinte)")
+        continue
+    b, pos, ini, b2 = s
+    achada = df.filter((F.col("_bloco") == F.lit(b)) & (F.col("_pos") == F.lit(pos))).select("value").first()
+    v = achada[0] if achada else "(linha não encontrada: a divisão do arquivo mudou; rode de novo)"
+    if b2 is None:
+        print(f"- {nome}: o arquivo termina com um texto aberto na linha {n_linha(b, pos, ini)} (pedaço do byte {b}). A "
+              f"limpeza segue; se a leitura falhar, é esta linha (arquivo cortado ou aspa sem escape):\n    {v[:500]}")
     else:
-        b, pos, ini, b2 = s
-        v = df.filter((F.col("_bloco") == F.lit(b)) & (F.col("_pos") == F.lit(pos))).select("value").first()[0]
-        onde = "nada fecha até o fim do arquivo: cortado?" if b2 is None else f"nada fecha a partir do byte {b2}"
-        print(f"- {nome}: a limpeza PARA na linha {n_linha(b, pos, ini)} (pedaço do byte {b}; {onde}):\n    {v[:500]}")
+        print(f"- {nome}: a limpeza PARA na linha {n_linha(b, pos, ini)} (pedaço do byte {b}; nada fecha a partir do "
+              f"byte {b2}):\n    {v[:500]}")
 
 # COMMAND ----------
 
