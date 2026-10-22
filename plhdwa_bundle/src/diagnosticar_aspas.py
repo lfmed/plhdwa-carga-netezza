@@ -6,7 +6,8 @@
 # MAGIC - quantas linhas parecem abrir ou fechar um texto em várias linhas, pela **regra atual** (aspas do CSV: só no começo
 # MAGIC   ou no fim de um campo) e pela **regra antiga** (qualquer aspa da linha);
 # MAGIC - as linhas em que as duas discordam (em geral, apóstrofo no meio do texto, como `D'AVILA`);
-# MAGIC - se a limpeza vai parar e em qual linha (a que abre um texto que não fecha no pedaço seguinte inteiro).
+# MAGIC - se a limpeza vai parar e em qual linha (a que abre um texto que não fecha no pedaço seguinte inteiro, ou que
+# MAGIC   não fecha até o fim do arquivo: arquivo cortado).
 # MAGIC
 # MAGIC Parâmetros: `cod_objeto` (lê formato e encoding da `ctl_parametros`) ou só `dat`; `limite` = linhas mostradas.
 
@@ -63,12 +64,15 @@ def n_linha(bloco, pos, ini):
 
 
 def simular(campo_imp, campo_pri, campo_ult):
-    """Encadeia os pedaços como a limpeza: devolve None (passa) ou (pedaço que abre, posição da linha que abre)."""
+    """Encadeia os pedaços como a limpeza: devolve None (passa) ou (pedaço que abre, posição da linha que abre, início
+    do pedaço, byte do pedaço seguinte; None = o arquivo termina com o texto aberto)."""
     aberto = False
     for i, r in enumerate(resumo):
         if aberto and r[campo_pri] is None:
             return resumo[i - 1]["_bloco"], resumo[i - 1][campo_ult], resumo[i - 1]["ini"], r["_bloco"]
         aberto = (int(aberto) + int(r[campo_imp] or 0)) % 2 == 1
+    if aberto:
+        return resumo[-1]["_bloco"], resumo[-1][campo_ult], resumo[-1]["ini"], None
     return None
 
 
@@ -82,8 +86,8 @@ for nome, campos in (("regra atual", ("impares", "pri", "ult")), ("regra antiga"
     else:
         b, pos, ini, b2 = s
         v = df.filter((F.col("_bloco") == F.lit(b)) & (F.col("_pos") == F.lit(pos))).select("value").first()[0]
-        print(f"- {nome}: a limpeza PARA na linha {n_linha(b, pos, ini)} (pedaço do byte {b}; nada fecha a partir do byte {b2}):"
-              f"\n    {v[:500]}")
+        onde = "nada fecha até o fim do arquivo: cortado?" if b2 is None else f"nada fecha a partir do byte {b2}"
+        print(f"- {nome}: a limpeza PARA na linha {n_linha(b, pos, ini)} (pedaço do byte {b}; {onde}):\n    {v[:500]}")
 
 # COMMAND ----------
 

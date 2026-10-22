@@ -839,9 +839,10 @@ def preparar_cliente(arq, meta, destino, tentativas=3):
 
 
 def _texto_aberto_sem_fim(df, meta, resumo, i):
-    """Mensagem do ERRO_DADOS quando o pedaço i inteiro não fecha o texto aberto no pedaço anterior: a linha que abriu
-    (nº no arquivo, contando o header), o byte do pedaço e o texto (já com a regex do cliente). Quase sempre é uma aspa
-    solta (sem escape) nessa linha, e não um registro de mais de um pedaço."""
+    """Mensagem do ERRO_DADOS quando o pedaço i inteiro não fecha o texto aberto no pedaço anterior (ou, com
+    i = len(resumo), quando o arquivo termina com o texto aberto): a linha que abriu (nº no arquivo, contando o header),
+    o byte do pedaço e o texto (já com a regex do cliente). Quase sempre é uma aspa solta (sem escape) nessa linha, e
+    não um registro de mais de um pedaço; no fim do arquivo, também pode ser arquivo cortado."""
     ant = resumo[i - 1]
     linha = sum(int(r["fim"]) - int(r["ini"]) + 1 for r in resumo[:i - 1]) + int(ant["ult_impar"]) - int(ant["ini"]) + 1
     linha += 1 if _p(meta, "header", "true") == "true" else 0
@@ -850,6 +851,10 @@ def _texto_aberto_sem_fim(df, meta, resumo, i):
                  .select("value").first()[0])
     except Exception as e:
         texto = f"(não consegui ler a linha: {str(e)[:200]})"
+    if i == len(resumo):
+        return (f"o arquivo termina com um texto entre aspas aberto: a linha {linha} (pedaço que começa no byte "
+                f"{ant['_bloco']}) abre um texto que não fecha até o fim do arquivo. Arquivo cortado ou aspa sem escape "
+                f"nessa linha (diagnóstico do arquivo inteiro: notebook diagnosticar_aspas). Linha: {(texto or '')[:500]}")
     return (f"registro com quebra de linha maior que um pedaço inteiro do arquivo: a linha {linha} (pedaço que começa no "
             f"byte {ant['_bloco']}) abre um texto entre aspas que não fecha em nenhuma linha do pedaço seguinte (byte "
             f"{resumo[i]['_bloco']} em diante). Provável aspa sem escape nessa linha (diagnóstico do arquivo inteiro: "
@@ -878,6 +883,8 @@ def _preparar_cliente(arq, meta, destino, estavel=False):
             faixas.append((resumo[i - 1]["_bloco"], resumo[i - 1]["ult_impar"], resumo[i - 1]["fim"]))   # início do registro
             faixas.append((r["_bloco"], r["ini"], r["pri_impar"]))                                    # continuação
         aberto = (int(aberto) + int(r["impares"] or 0)) % 2 == 1
+    if aberto:                                        # fim do arquivo com texto aberto: cortado ou aspa solta
+        raise ErroCarga("ERRO_DADOS", _texto_aberto_sem_fim(df, meta, resumo, len(resumo)))
     fronteira = F.lit(False)
     for b, a, z in faixas:                            # (pedaço, posição dentro do pedaço): estável entre execuções
         fronteira = fronteira | ((F.col("_bloco") == F.lit(b)) & F.col("_pos").between(a, z))
