@@ -7,9 +7,13 @@
 # MAGIC   ou no fim de um campo) e pela **regra antiga** (qualquer aspa da linha);
 # MAGIC - as linhas em que as duas discordam (em geral, apóstrofo no meio do texto, como `D'AVILA`);
 # MAGIC - se a limpeza vai parar e em qual linha (a que abre um texto que não fecha no pedaço seguinte inteiro, ou que
-# MAGIC   não fecha até o fim do arquivo: arquivo cortado).
+# MAGIC   não fecha até o fim do arquivo: arquivo cortado);
+# MAGIC - **alternância abre/fecha** (22/10/2026): a linha que abre um texto em várias linhas começa como um registro; a que
+# MAGIC   fecha começa no meio do texto. Duas "abre" ou duas "fecha" seguidas mostram onde está a linha mal contada que
+# MAGIC   inverte a contagem até o fim do arquivo (sinal: total de linhas ímpares ímpar).
 # MAGIC
-# MAGIC Parâmetros: `cod_objeto` (lê formato e encoding da `ctl_parametros`) ou só `dat`; `limite` = linhas mostradas.
+# MAGIC Parâmetros: `cod_objeto` (lê formato e encoding da `ctl_parametros`) ou só `dat`; `limite` = linhas mostradas;
+# MAGIC `inicio_registro` = regex do começo de um registro (vazio = número seguido do delimitador).
 
 # COMMAND ----------
 
@@ -24,7 +28,8 @@ dbutils.widgets.text("schema", "")
 dbutils.widgets.text("dat", "")                 # caminho completo do DAT (s3://... ou /Volumes/...)
 dbutils.widgets.text("cod_objeto", "")          # vazio = formato padrão (| e aspas simples, header, UTF-8)
 dbutils.widgets.text("limite", "20")
-P = {k: dbutils.widgets.get(k) for k in ("catalogo", "schema", "dat", "cod_objeto", "limite")}
+dbutils.widgets.text("inicio_registro", "")    # vazio = ^-?[0-9]+ seguido do delimitador (1º campo numérico)
+P = {k: dbutils.widgets.get(k) for k in ("catalogo", "schema", "dat", "cod_objeto", "limite", "inicio_registro")}
 m.CTX.update({n: v[0] for n, v in m.PARAMETROS.items()})
 m.CTX.update({"spark": spark, "dbutils": dbutils, "catalogo": P["catalogo"], "schema": P["schema"]})
 if P["cod_objeto"]:
@@ -113,3 +118,29 @@ print(f"Primeiras {LIMITE} linhas que abrem/fecham texto em várias linhas pela 
 display(com_linha.filter("_impar = 1").orderBy("_bloco", "_pos")
         .select("linha", F.col("_bloco").alias("byte_do_pedaco"), F.substring("value", 1, 500).alias("linha_texto"))
         .limit(LIMITE))
+
+
+# COMMAND ----------
+
+# Alternância abre/fecha. Cada registro em várias linhas tem 1 linha que abre (começa como registro) e 1 que fecha
+# (começa no meio do texto): na ordem do arquivo, elas alternam. Quebra da alternância = linha mal contada por perto
+# (a anterior ou a própria). Depois de cada quebra, a conferência segue a partir do papel da linha (ressincroniza).
+inicio_rx = P["inicio_registro"] or f"^-?[0-9]+{re.escape(m._p(meta, 'delimitador', '|'))}"
+impares = (com_linha.filter("_impar = 1").orderBy("_bloco", "_pos")
+           .select("linha", "_bloco", F.col("value").rlike(inicio_rx).alias("abre"),
+                   F.substring("value", 1, 300).alias("texto")).limit(500000).collect())
+n_abre = sum(1 for r in impares if r["abre"])
+print(f"\nAlternância (começo de registro = {inicio_rx!r}): {len(impares)} linha(s) ímpar(es) · {n_abre} abrem · "
+      f"{len(impares) - n_abre} fecham" + (" · total ímpar: há linha mal contada" if len(impares) % 2 else ""))
+quebras, aberto, anterior = [], False, None
+for r in impares:
+    if r["abre"] == aberto:                    # abre com texto já aberto, ou fecha sem texto aberto
+        quebras.append((anterior, r, "abre de novo sem fechar o anterior" if r["abre"] else "fecha sem ter aberto"))
+    aberto = bool(r["abre"])
+    anterior = r
+print(f"{len(quebras)} quebra(s) da alternância" + (f" (primeiras {LIMITE}):" if quebras else ": a sequência alterna certo"))
+for ant, r, motivo in quebras[:LIMITE]:
+    print(f"\n- linha {r['linha']} ({'abre' if r['abre'] else 'fecha'}: {motivo}); byte do pedaço {r['_bloco']}")
+    if ant:
+        print(f"    anterior ímpar, linha {ant['linha']} ({'abre' if ant['abre'] else 'fecha'}): {ant['texto']}")
+    print(f"    esta,           linha {r['linha']}: {r['texto']}")
