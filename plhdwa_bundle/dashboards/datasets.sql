@@ -135,6 +135,36 @@ FROM __PLH__.v_arquivo_concluido
 WHERE concluido_em >= date_sub(current_date(), 30)
 GROUP BY 1;
 
+-- ds: vazao
+-- Vazão: 1 linha por arquivo concluído (30 dias). espera = roteado -> iniciado (fila do Jobs / vaga); carga = leitura +
+-- gravação na tabela ·
+-- execução = job_run_id (o despachante ou o job independente).
+SELECT concluido_em, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, grupo, cod_objeto, lote_id,
+       job_run_id, tamanho_bytes / 1073741824                                     AS gb,
+       qtd_inserida                                                               AS registros,
+       unix_timestamp(iniciado_em) - unix_timestamp(roteado_em)                   AS espera_s,
+       unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)                   AS carga_s,
+       unix_timestamp(concluido_em) - unix_timestamp(roteado_em)                  AS duracao_s,
+       tamanho_bytes / 1073741824 /
+             greatest(unix_timestamp(concluido_em) - unix_timestamp(roteado_em), 1) * 60 AS gb_por_min
+FROM __PLH__.v_arquivo_concluido
+WHERE concluido_em >= date_sub(current_date(), 30);
+
+-- ds: vazao_hora
+SELECT date_trunc('HOUR', concluido_em) AS hora, fila AS modo, grupo,
+       count(*)                                                                   AS arquivos,
+       round(sum(tamanho_bytes) / 1073741824, 3)                                  AS gb,
+       sum(qtd_inserida)                                                          AS registros,
+       count(DISTINCT job_run_id)                                                 AS execucoes,
+       count(DISTINCT cod_objeto)                                                 AS objetos,
+       round(sum(tamanho_bytes) / 1073741824 /
+             greatest(unix_timestamp(max(concluido_em)) - unix_timestamp(min(roteado_em)), 1) * 60, 3) AS gb_por_min,
+       round(avg(unix_timestamp(iniciado_em) - unix_timestamp(roteado_em)), 1)    AS espera_media_s,
+       round(avg(unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)), 1)    AS carga_media_s
+FROM __PLH__.v_arquivo_concluido
+WHERE concluido_em >= date_sub(current_date(), 30)
+GROUP BY ALL;
+
 -- ds: erros_dia
 SELECT date(evento_ts) AS dia, status, count(*) AS qtd
 FROM __PLH__.log_carga_evento

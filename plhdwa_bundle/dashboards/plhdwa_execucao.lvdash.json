@@ -170,6 +170,44 @@
    ]
   },
   {
+   "name": "vazao",
+   "displayName": "vazao",
+   "queryLines": [
+    "-- Vazão: 1 linha por arquivo concluído (30 dias). espera = roteado -> iniciado (fila do Jobs / vaga); carga = leitura +\n",
+    "-- gravação na tabela ·\n",
+    "-- execução = job_run_id (o despachante ou o job independente).\n",
+    "SELECT concluido_em, fila AS modo, coalesce(tipo_job, 'PERFORMANCE_OPTIMIZED') AS tipo_job, grupo, cod_objeto, lote_id,\n",
+    "       job_run_id, tamanho_bytes / 1073741824                                     AS gb,\n",
+    "       qtd_inserida                                                               AS registros,\n",
+    "       unix_timestamp(iniciado_em) - unix_timestamp(roteado_em)                   AS espera_s,\n",
+    "       unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)                   AS carga_s,\n",
+    "       unix_timestamp(concluido_em) - unix_timestamp(roteado_em)                  AS duracao_s,\n",
+    "       tamanho_bytes / 1073741824 /\n",
+    "             greatest(unix_timestamp(concluido_em) - unix_timestamp(roteado_em), 1) * 60 AS gb_por_min\n",
+    "FROM v_arquivo_concluido\n",
+    "WHERE concluido_em >= date_sub(current_date(), 30)\n"
+   ]
+  },
+  {
+   "name": "vazao_hora",
+   "displayName": "vazao_hora",
+   "queryLines": [
+    "SELECT date_trunc('HOUR', concluido_em) AS hora, fila AS modo, grupo,\n",
+    "       count(*)                                                                   AS arquivos,\n",
+    "       round(sum(tamanho_bytes) / 1073741824, 3)                                  AS gb,\n",
+    "       sum(qtd_inserida)                                                          AS registros,\n",
+    "       count(DISTINCT job_run_id)                                                 AS execucoes,\n",
+    "       count(DISTINCT cod_objeto)                                                 AS objetos,\n",
+    "       round(sum(tamanho_bytes) / 1073741824 /\n",
+    "             greatest(unix_timestamp(max(concluido_em)) - unix_timestamp(min(roteado_em)), 1) * 60, 3) AS gb_por_min,\n",
+    "       round(avg(unix_timestamp(iniciado_em) - unix_timestamp(roteado_em)), 1)    AS espera_media_s,\n",
+    "       round(avg(unix_timestamp(fim_carga) - unix_timestamp(inicio_carga)), 1)    AS carga_media_s\n",
+    "FROM v_arquivo_concluido\n",
+    "WHERE concluido_em >= date_sub(current_date(), 30)\n",
+    "GROUP BY ALL\n"
+   ]
+  },
+  {
    "name": "diario",
    "displayName": "diario",
    "queryLines": [
@@ -2072,6 +2110,984 @@
      "position": {
       "x": 0,
       "y": 6,
+      "width": 6,
+      "height": 7
+     }
+    }
+   ]
+  },
+  {
+   "name": "vazao",
+   "displayName": "Vazão",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_vaz",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## Vazão da ingestão (arquivos concluídos, 30 dias)"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "s_vaz",
+      "multilineTextboxSpec": {
+       "lines": [
+        "Por hora de conclusão · execução = job_run_id (despachante ou job independente) · espera = roteado → iniciado (vaga ou fila do Jobs) · carga = leitura + gravação na tabela"
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f_vper",
+      "queries": [
+       {
+        "name": "vazao_concluido_em",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "concluido_em",
+           "expression": "`concluido_em`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "vazao_hora_hora",
+        "query": {
+         "datasetName": "vazao_hora",
+         "fields": [
+          {
+           "name": "hora",
+           "expression": "`hora`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-range-picker",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "concluido_em",
+          "displayName": "Período",
+          "queryName": "vazao_concluido_em"
+         },
+         {
+          "fieldName": "hora",
+          "displayName": "Período",
+          "queryName": "vazao_hora_hora"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Período"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_vmodo",
+      "queries": [
+       {
+        "name": "vazao_modo",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "vazao_hora_modo",
+        "query": {
+         "datasetName": "vazao_hora",
+         "fields": [
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "modo",
+          "displayName": "Modo",
+          "queryName": "vazao_modo"
+         },
+         {
+          "fieldName": "modo",
+          "displayName": "Modo",
+          "queryName": "vazao_hora_modo"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Modo"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_vgrupo",
+      "queries": [
+       {
+        "name": "vazao_grupo",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "grupo",
+           "expression": "`grupo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "vazao_hora_grupo",
+        "query": {
+         "datasetName": "vazao_hora",
+         "fields": [
+          {
+           "name": "grupo",
+           "expression": "`grupo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo",
+          "queryName": "vazao_grupo"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo",
+          "queryName": "vazao_hora_grupo"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Grupo"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_varq",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "count(*)",
+           "expression": "COUNT(`*`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "count(*)",
+         "displayName": "Arquivos"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 4,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_vgb",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "sum(gb)",
+           "expression": "SUM(`gb`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(gb)",
+         "displayName": "GB"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "GB"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 4,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_vreg",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "sum(registros)",
+           "expression": "SUM(`registros`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(registros)",
+         "displayName": "Registros"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Registros"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 4,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_vexe",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "countdistinct(job_run_id)",
+           "expression": "COUNT(DISTINCT `job_run_id`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "countdistinct(job_run_id)",
+         "displayName": "Execuções"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Execuções"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 7,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_vgbmin",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "avg(gb_por_min)",
+           "expression": "AVG(`gb_por_min`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "avg(gb_por_min)",
+         "displayName": "GB/min médio por arquivo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "GB/min médio por arquivo"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 7,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k_vesp",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "avg(espera_s)",
+           "expression": "AVG(`espera_s`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "avg(espera_s)",
+         "displayName": "Espera média (s)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Espera média (s)"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 7,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "g_varq",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "hourly(concluido_em)",
+           "expression": "DATE_TRUNC(\"HOUR\", `concluido_em`)"
+          },
+          {
+           "name": "count(*)",
+           "expression": "COUNT(`*`)"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "hourly(concluido_em)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Hora"
+        },
+        "y": {
+         "fieldName": "count(*)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Arquivos"
+        },
+        "color": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Arquivos por hora"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 10,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_vgb",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "hourly(concluido_em)",
+           "expression": "DATE_TRUNC(\"HOUR\", `concluido_em`)"
+          },
+          {
+           "name": "sum(gb)",
+           "expression": "SUM(`gb`)"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "hourly(concluido_em)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Hora"
+        },
+        "y": {
+         "fieldName": "sum(gb)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "GB"
+        },
+        "color": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "GB por hora"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 10,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_vreg",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "hourly(concluido_em)",
+           "expression": "DATE_TRUNC(\"HOUR\", `concluido_em`)"
+          },
+          {
+           "name": "sum(registros)",
+           "expression": "SUM(`registros`)"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "hourly(concluido_em)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Hora"
+        },
+        "y": {
+         "fieldName": "sum(registros)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Registros"
+        },
+        "color": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Registros por hora"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 15,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_vexe",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "hourly(concluido_em)",
+           "expression": "DATE_TRUNC(\"HOUR\", `concluido_em`)"
+          },
+          {
+           "name": "countdistinct(job_run_id)",
+           "expression": "COUNT(DISTINCT `job_run_id`)"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "hourly(concluido_em)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Hora"
+        },
+        "y": {
+         "fieldName": "countdistinct(job_run_id)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Execuções"
+        },
+        "color": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Execuções por hora"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 15,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_vgbmin",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "hourly(concluido_em)",
+           "expression": "DATE_TRUNC(\"HOUR\", `concluido_em`)"
+          },
+          {
+           "name": "avg(gb_por_min)",
+           "expression": "AVG(`gb_por_min`)"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "hourly(concluido_em)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Hora"
+        },
+        "y": {
+         "fieldName": "avg(gb_por_min)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "GB/min"
+        },
+        "color": {
+         "fieldName": "modo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Modo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "GB/min ao longo do tempo (média por arquivo)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 20,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "g_vtempo",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao",
+         "fields": [
+          {
+           "name": "hourly(concluido_em)",
+           "expression": "DATE_TRUNC(\"HOUR\", `concluido_em`)"
+          },
+          {
+           "name": "avg(espera_s)",
+           "expression": "AVG(`espera_s`)"
+          },
+          {
+           "name": "avg(carga_s)",
+           "expression": "AVG(`carga_s`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "hourly(concluido_em)",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Hora"
+        },
+        "y": {
+         "scale": {
+          "type": "quantitative"
+         },
+         "fields": [
+          {
+           "fieldName": "avg(espera_s)",
+           "displayName": "Espera (s)"
+          },
+          {
+           "fieldName": "avg(carga_s)",
+           "displayName": "Carga (s)"
+          }
+         ]
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Espera × carga por hora (média por arquivo, s)"
+       },
+       "mark": {
+        "layout": "group"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 20,
+      "width": 3,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "t_vhora",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "vazao_hora",
+         "fields": [
+          {
+           "name": "hora",
+           "expression": "`hora`"
+          },
+          {
+           "name": "modo",
+           "expression": "`modo`"
+          },
+          {
+           "name": "grupo",
+           "expression": "`grupo`"
+          },
+          {
+           "name": "arquivos",
+           "expression": "`arquivos`"
+          },
+          {
+           "name": "gb",
+           "expression": "`gb`"
+          },
+          {
+           "name": "registros",
+           "expression": "`registros`"
+          },
+          {
+           "name": "execucoes",
+           "expression": "`execucoes`"
+          },
+          {
+           "name": "objetos",
+           "expression": "`objetos`"
+          },
+          {
+           "name": "gb_por_min",
+           "expression": "`gb_por_min`"
+          },
+          {
+           "name": "espera_media_s",
+           "expression": "`espera_media_s`"
+          },
+          {
+           "name": "carga_media_s",
+           "expression": "`carga_media_s`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "hora",
+          "displayName": "Hora"
+         },
+         {
+          "fieldName": "modo",
+          "displayName": "Modo"
+         },
+         {
+          "fieldName": "grupo",
+          "displayName": "Grupo"
+         },
+         {
+          "fieldName": "arquivos",
+          "displayName": "Arquivos"
+         },
+         {
+          "fieldName": "gb",
+          "displayName": "GB"
+         },
+         {
+          "fieldName": "registros",
+          "displayName": "Registros"
+         },
+         {
+          "fieldName": "execucoes",
+          "displayName": "Execuções"
+         },
+         {
+          "fieldName": "objetos",
+          "displayName": "Objetos"
+         },
+         {
+          "fieldName": "gb_por_min",
+          "displayName": "GB/min (hora)"
+         },
+         {
+          "fieldName": "espera_media_s",
+          "displayName": "Espera média (s)"
+         },
+         {
+          "fieldName": "carga_media_s",
+          "displayName": "Carga média (s)"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Resumo por hora, modo e grupo"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 25,
       "width": 6,
       "height": 7
      }

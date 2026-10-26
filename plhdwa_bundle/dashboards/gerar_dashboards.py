@@ -91,6 +91,19 @@ def filtro(nome, ds, campo, titulo, x, y, w=3):
             "position": {"x": x, "y": y, "width": w, "height": 2}}
 
 
+def filtro_varios(nome, alvos, titulo, x, y, w=2, tipo="filter-multi-select"):
+    """Filtro que vale para vários datasets: alvos = [(dataset, campo), ...]."""
+    qs = [(f"{ds}_{campo}", ds, campo) for ds, campo in alvos]
+    return {"widget": {"name": nome, "queries": [{"name": q, "query": {
+                "datasetName": ds, "fields": _campos([(campo, f"`{campo}`")]), "disaggregated": False}}
+                for q, ds, campo in qs],
+            "spec": {"version": 2, "widgetType": tipo,
+                     "encodings": {"fields": [{"fieldName": campo, "displayName": titulo, "queryName": q}
+                                              for q, _, campo in qs]},
+                     "frame": {"showTitle": True, "title": titulo}}},
+            "position": {"x": x, "y": y, "width": w, "height": 2}}
+
+
 def pagina(nome, titulo, layout):
     return {"name": nome, "displayName": titulo, "pageType": "PAGE_TYPE_CANVAS", "layout": layout}
 
@@ -178,6 +191,42 @@ def dash_execucao(ds):
                                        ("duracao_s", "Duração (s)"), ("carga_s", "Carga (s)"), ("qtd_inserida", "Registros")],
                "Arquivos concluídos (30 dias)", 6, 7),
     ])
+    H = ("hourly(concluido_em)", 'DATE_TRUNC("HOUR", `concluido_em`)', T, "Hora")
+    M = ("modo", "`modo`", C, "Modo")
+    vazao = pagina("vazao", "Vazão", [
+        texto("t_vaz", "## Vazão da ingestão (arquivos concluídos, 30 dias)", 0, 0),
+        texto("s_vaz", "Por hora de conclusão · execução = job_run_id (despachante ou job independente) · "
+                       "espera = roteado → iniciado (vaga ou fila do Jobs) · carga = leitura + gravação na tabela", 0, 1),
+        filtro_varios("f_vper", [("vazao", "concluido_em"), ("vazao_hora", "hora")], "Período", 0, 2,
+                      tipo="filter-date-range-picker"),
+        filtro_varios("f_vmodo", [("vazao", "modo"), ("vazao_hora", "modo")], "Modo", 2, 2),
+        filtro_varios("f_vgrupo", [("vazao", "grupo"), ("vazao_hora", "grupo")], "Grupo", 4, 2),
+        contador("k_varq", "vazao", None, "Arquivos", 0, 4, agregado=("count(*)", "COUNT(`*`)")),
+        contador("k_vgb", "vazao", None, "GB", 2, 4, agregado=("sum(gb)", "SUM(`gb`)")),
+        contador("k_vreg", "vazao", None, "Registros", 4, 4, agregado=("sum(registros)", "SUM(`registros`)")),
+        contador("k_vexe", "vazao", None, "Execuções", 0, 7,
+                 agregado=("countdistinct(job_run_id)", "COUNT(DISTINCT `job_run_id`)")),
+        contador("k_vgbmin", "vazao", None, "GB/min médio por arquivo", 2, 7,
+                 agregado=("avg(gb_por_min)", "AVG(`gb_por_min`)")),
+        contador("k_vesp", "vazao", None, "Espera média (s)", 4, 7, agregado=("avg(espera_s)", "AVG(`espera_s`)")),
+        grafico("g_varq", "bar", "vazao", H, ("count(*)", "COUNT(`*`)", Q, "Arquivos"), "Arquivos por hora",
+                (0, 10, 3, 5), cor=M),
+        grafico("g_vgb", "bar", "vazao", H, ("sum(gb)", "SUM(`gb`)", Q, "GB"), "GB por hora", (3, 10, 3, 5), cor=M),
+        grafico("g_vreg", "bar", "vazao", H, ("sum(registros)", "SUM(`registros`)", Q, "Registros"),
+                "Registros por hora", (0, 15, 3, 5), cor=M),
+        grafico("g_vexe", "bar", "vazao", H, ("countdistinct(job_run_id)", "COUNT(DISTINCT `job_run_id`)", Q, "Execuções"),
+                "Execuções por hora", (3, 15, 3, 5), cor=M),
+        grafico("g_vgbmin", "line", "vazao", H, ("avg(gb_por_min)", "AVG(`gb_por_min`)", Q, "GB/min"),
+                "GB/min ao longo do tempo (média por arquivo)", (0, 20, 3, 5), cor=M),
+        grafico("g_vtempo", "bar", "vazao", H,
+                [("avg(espera_s)", "AVG(`espera_s`)", Q, "Espera (s)"), ("avg(carga_s)", "AVG(`carga_s`)", Q, "Carga (s)")],
+                "Espera × carga por hora (média por arquivo, s)", (3, 20, 3, 5), agrupado=True),
+        tabela("t_vhora", "vazao_hora", [("hora", "Hora"), ("modo", "Modo"), ("grupo", "Grupo"), ("arquivos", "Arquivos"),
+                                         ("gb", "GB"), ("registros", "Registros"), ("execucoes", "Execuções"),
+                                         ("objetos", "Objetos"), ("gb_por_min", "GB/min (hora)"),
+                                         ("espera_media_s", "Espera média (s)"), ("carga_media_s", "Carga média (s)")],
+               "Resumo por hora, modo e grupo", 25, 7),
+    ])
     hist = pagina("historico", "Histórico", [
         texto("t_hist", "## Histórico (30 dias)", 0, 0),
         grafico("g_gbdia", "bar", "diario", ("dia", "`dia`", T, "Dia"), ("arquivos", "`arquivos`", Q, "Arquivos"),
@@ -188,8 +237,8 @@ def dash_execucao(ds):
                                    ("ultimo_concluido", "Último concluído")], "Resumo diário", 6, 6),
     ])
     usados = ["janela", "backlog_fila", "em_execucao", "objetos_execucao", "jobs_execucao", "lotes", "ciclos", "travados", "eventos", "controle",
-              "desempenho", "diario", "erros_dia", "filas"]
-    return {"datasets": [ds[n] for n in usados], "pages": [agora, objetos, desemp, hist]}
+              "desempenho", "vazao", "vazao_hora", "diario", "erros_dia", "filas"]
+    return {"datasets": [ds[n] for n in usados], "pages": [agora, objetos, desemp, vazao, hist]}
 
 
 def dash_custo(ds):

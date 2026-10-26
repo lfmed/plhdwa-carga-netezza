@@ -3,6 +3,18 @@
 Versão no formato `1.NNN`: cada modificação publicada sobe 1 no número (1.000, 1.001, 1.002, …). A versão atual fica em
 `plhdwa_bundle/VERSAO` (vai junto no deploy do bundle) e cada publicação no git ganha a tag `v<versão>`.
 
+## [1.002] · 26/10/2026
+
+- Dashboard **PLHDWA · Execução**: página nova **Vazão** (decisão 40), por hora de conclusão, 30 dias:
+  - cartões: arquivos, GB, registros, execuções (`job_run_id`: despachante ou job independente), GB/min médio por arquivo
+    e espera média;
+  - gráficos por hora, com cor por modo: arquivos, GB, registros e execuções; GB/min ao longo do tempo; espera
+    (roteado → iniciado) × carga;
+  - tabela "Resumo por hora, modo e grupo"; filtros de período, modo e grupo (valem para todos os widgets da página).
+- Datasets novos em `dashboards/datasets.sql`: `vazao` (1 linha por arquivo concluído) e `vazao_hora`; `gerar_dashboards.py`
+  ganhou `filtro_varios` (um filtro para vários datasets, inclusive o de período).
+- Sem mudança de SQL nas tabelas nem no motor: basta o deploy (o bundle publica o dashboard).
+
 ## [1.001] · 26/10/2026
 
 - Modo de limpeza `SINGLE` (`src/limpeza_single.py`): o header sai do DAT **antes** de gravar as partes do arquivo limpo
