@@ -92,10 +92,11 @@ def main():
                    help="tipo do job independente (só vale com --execucao JOB)")
     p.add_argument("--limpeza", choices=["true", "false"],
                    help="sobrepõe a variável limpeza_dat só para este objeto (coluna limpeza)")
-    p.add_argument("--limpeza-modo", choices=["CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA"],
+    p.add_argument("--limpeza-modo", choices=["CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA", "SINGLE"],
                    help="CLIENTE (padrão do motor) = tmp em partes paralelas + multiLine; AUTO detecta por arquivo; "
                         "DIRETA = regex na própria leitura, sem tmp; PARALELA = tmp em partes sem multiLine; "
-                        "MULTILINHA = 1 arquivo + multiLine (não usar em arquivo grande)")
+                        "MULTILINHA = 1 arquivo + multiLine (não usar em arquivo grande); "
+                        "SINGLE = código do cliente (src/limpeza_single.py)")
     p.add_argument("--limpeza-quote", help="aspas dos textos no arquivo limpo (padrão do motor: aspas simples)")
     a = p.parse_args()
 

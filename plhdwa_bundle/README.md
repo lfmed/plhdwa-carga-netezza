@@ -239,6 +239,7 @@ Modos (coluna `limpeza_modo` da `ctl_parametros`, também pelo `converter_ddl_ne
 | `PARALELA` | `tmp/` em partes lidas sem `multiLine` | objeto que nunca tem registro em mais de uma linha |
 | `DIRETA` | regex e colunas na própria leitura (`from_csv`), sem `tmp` | alternativa sem gravar `tmp` |
 | `MULTILINHA` | `tmp/` em 1 arquivo (`coalesce(1)`) + `multiLine`, tarefa única | **não usar em arquivo grande**: no teste de 80 GB a ordem das linhas não se manteve |
+| `SINGLE` | o código do cliente, fiel (`src/limpeza_single.py`): linha a linha, 4 regex, `tmp/` em partes, leitura com `header`, `multiLine` e `PERMISSIVE` | pedido do cliente (26/10/2026). Rápido e não depende da contagem de aspas, mas **perde a 1ª linha de cada parte**, corta o registro em várias linhas da fronteira entre partes, não dá erro em defeito, só lê UTF-8 e apaga o `\|` (medido: 7 de 1.171.558 registros a menos em 80 MB) |
 
 Comparativo (ponta a ponta pelo motor, landing no S3; detalhes na documentação técnica, seção 3b):
 

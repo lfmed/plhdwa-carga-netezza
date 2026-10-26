@@ -188,7 +188,8 @@ variables:
       "true" (padrão) = antes da carga, cada DAT passa pela limpeza do cliente (regex de escape e \null), é gravado
       limpo em pasta_tmp/<arquivo>/ e lido com header, delimitador, multiLine e aspas simples; o arquivo limpo é
       apagado no fim. "false" = lê o DAT direto. Cada objeto pode sobrepor com a coluna limpeza da ctl_parametros.
-      O modo vem da coluna limpeza_modo da ctl_parametros: CLIENTE (padrão), AUTO, PARALELA, DIRETA ou MULTILINHA.
+      O modo vem da coluna limpeza_modo da ctl_parametros: CLIENTE (padrão), AUTO, PARALELA, DIRETA, MULTILINHA ou
+      SINGLE (o código do cliente, em src/limpeza_single.py).
     default: "true"
   limpeza_pedaco_mb:
     description: >-

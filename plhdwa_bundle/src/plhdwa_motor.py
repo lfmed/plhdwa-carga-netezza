@@ -25,6 +25,8 @@ import uuid
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+import limpeza_single                         # modo SINGLE: o código do cliente, em arquivo separado (decisão 39)
+
 # Nome dos arquivos: <cod>_[<nomegrupo>_]<nome>_<data_mov yyyyMMdd>_<data_geracao yyyyMMddHHmmss>.<dat|CTL>
 # (extensão em maiúscula ou minúscula: .CTL/.ctl, .DAT/.dat)
 # (o grupo é o 1º segmento depois do código, só para visualização; a carga olha só o código)
@@ -653,6 +655,10 @@ def _leitura(arq, meta):
     tsf = _p(meta, "timestamp_format", "yyyy-MM-dd HH:mm[:ss]")
     o = {"sep": _p(meta, "delimitador", "|"), "nullValue": _p(meta, "null_value"), "timestampFormat": tsf,
          "timestampNTZFormat": tsf, "dateFormat": _p(meta, "date_format", "yyyy-MM-dd")}
+    if arq.get("dat_limpo") and arq.get("limpeza_modo") == "SINGLE":   # as opções do código do cliente
+        o.update(limpeza_single.opcoes_leitura(_p(meta, "delimitador", "|"), _p(meta, "limpeza_quote", "'")))
+        o.pop("sep")
+        return arq["dat_limpo"], o
     if arq.get("dat_limpo"):
         modo = arq.get("limpeza_modo")
         multi = modo in ("MULTILINHA", "CLIENTE")       # CLIENTE: partes sem header, lidas com multiLine em paralelo
@@ -671,6 +677,9 @@ def ler_dat(arq, meta):
     usa ler_dat_escape)."""
     if arq.get("limpeza_modo") == "DIRETA":
         return ler_limpo_direto(arq, meta)
+    if arq.get("limpeza_modo") == "SINGLE":           # como o cliente: PERMISSIVE, header pela posição
+        caminho, o = _leitura(arq, meta)
+        return CTX["spark"].read.format("csv").schema(meta["schema"]).options(**o).load(caminho)
     if not arq.get("dat_limpo") and _p(meta, "escape") and not _p(meta, "quote"):
         return ler_dat_escape(arq, meta)
     caminho, o = _leitura(arq, meta)
@@ -720,7 +729,9 @@ def ler_header(arq):
 #       DIRETA        regex + separação das colunas (from_csv) na mesma leitura: paralelo, sem arquivo temporário;
 #       PARALELA      arquivo limpo em pasta_tmp em várias partes (sem header), lido em paralelo;
 #       MULTILINHA    (não recomendado em arquivo grande) arquivo limpo em UM arquivo (coalesce(1)) lido com multiLine:
-#                     tarefa única, e no teste de 80 GB a ordem das linhas não se manteve.
+#                     tarefa única, e no teste de 80 GB a ordem das linhas não se manteve;
+#       SINGLE        o código do cliente, fiel (src/limpeza_single.py): partes em paralelo lidas com header, multiLine e
+#                     PERMISSIVE (sem o FAILFAST e sem os ajustes do CLIENTE; ver os avisos no arquivo).
 #     Em todos: leitura com o encoding da tabela (spark.read.text só lê UTF-8), schema da tabela e FAILFAST.
 # =============================================================================
 _RX_LIMPEZA = [(r'\\(?![\\\'"|nrt])', ''),   # barra que não escapa \ ' " | n r t: sai
@@ -733,7 +744,7 @@ def limpeza_ativa(meta):
     return _p(meta, "limpeza", str(CTX["limpeza_dat"])).lower() == "true"
 
 
-MODOS_LIMPEZA = ("CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA")
+MODOS_LIMPEZA = ("CLIENTE", "AUTO", "DIRETA", "PARALELA", "MULTILINHA", "SINGLE")
 
 
 def modo_limpeza(meta):
@@ -964,7 +975,8 @@ def preparar_dat(arq, meta):
        PARALELA   regex + arquivo limpo em pasta_tmp em várias partes (sem header), lido em paralelo;
        MULTILINHA arquivo limpo em UM arquivo (coalesce(1)) + multiLine. NÃO recomendado em arquivo grande: uma
                   tarefa só, e no teste de 80 GB o coalesce(1) não manteve a ordem das linhas (o header foi parar no
-                  meio do arquivo).
+                  meio do arquivo);
+       SINGLE     o código do cliente (limpeza_single.limpar): arquivo limpo em pasta_tmp em várias partes.
     Devolve (modo efetivo, segundos, detalhe)."""
     inicio = time.time()
     modo, detalhe = modo_limpeza(meta), ""
@@ -976,6 +988,10 @@ def preparar_dat(arq, meta):
     if modo == "CLIENTE":
         arq["dat_limpo"] = caminho_tmp(arq)
         detalhe = preparar_cliente(arq, meta, arq["dat_limpo"]) + (f"; {detalhe}" if detalhe else "")
+    if modo == "SINGLE":
+        arq["dat_limpo"] = caminho_tmp(arq)
+        limpeza_single.limpar(CTX["spark"], arq["dat"], arq["dat_limpo"])
+        detalhe = "SINGLE: código do cliente (src/limpeza_single.py)"
     if modo in ("PARALELA", "MULTILINHA"):
         destino = caminho_tmp(arq)
         linhas = _linhas_limpas(arq, meta, tirar_header=(modo == "PARALELA"))

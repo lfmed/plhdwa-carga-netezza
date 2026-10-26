@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.ctl_parametros (
   date_format       STRING           COMMENT 'arquivo: formato das datas (NULL = yyyy-MM-dd)',
   timestamp_format  STRING           COMMENT 'arquivo: formato dos timestamps (NULL = yyyy-MM-dd HH:mm[:ss])',
   limpeza           BOOLEAN          COMMENT 'limpeza do DAT antes da carga (NULL = variável limpeza_dat)',
-  limpeza_modo      STRING           COMMENT 'CLIENTE | AUTO | PARALELA | DIRETA | MULTILINHA (NULL = CLIENTE)',
+  limpeza_modo      STRING           COMMENT 'CLIENTE | AUTO | PARALELA | DIRETA | MULTILINHA | SINGLE (NULL = CLIENTE)',
   limpeza_quote     STRING           COMMENT 'aspas dos textos na leitura do arquivo limpo (NULL = aspa simples)',
   tabela_origem     STRING           COMMENT 'tabela externa de origem no Netezza (informativo)',
   observacao        STRING,
@@ -82,7 +82,7 @@ ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_execucao CHEC
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_tipo_job;
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_tipo_job CHECK (tipo_job IN ('PERFORMANCE_OPTIMIZED', 'STANDARD'));
 ALTER TABLE ${catalogo}.${schema}.ctl_parametros DROP CONSTRAINT IF EXISTS ck_limpeza_modo;
-ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_limpeza_modo CHECK (limpeza_modo IS NULL OR limpeza_modo IN ('CLIENTE', 'AUTO', 'PARALELA', 'DIRETA', 'MULTILINHA'));
+ALTER TABLE ${catalogo}.${schema}.ctl_parametros ADD CONSTRAINT ck_limpeza_modo CHECK (limpeza_modo IS NULL OR limpeza_modo IN ('CLIENTE', 'AUTO', 'PARALELA', 'DIRETA', 'MULTILINHA', 'SINGLE'));
 
 -- 2) Log de eventos por arquivo: só INSERT (vários workers gravando ao mesmo tempo, sem conflito).
 CREATE TABLE IF NOT EXISTS ${catalogo}.${schema}.log_carga_evento (
