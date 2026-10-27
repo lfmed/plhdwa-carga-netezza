@@ -3,6 +3,18 @@
 Versão no formato `1.NNN`: cada modificação publicada sobe 1 no número (1.000, 1.001, 1.002, …). A versão atual fica em
 `plhdwa_bundle/VERSAO` (vai junto no deploy do bundle) e cada publicação no git ganha a tag `v<versão>`.
 
+## [1.003] · 26/10/2026
+
+- Especificação (`docs/documentacao_carga_netezza_databricks.html`): o texto das seções acompanha a solução atual (até
+  aqui só a tabela de decisões era atualizada):
+  - cabeçalho com a versão e o changelog; resumo com a limpeza e o DAT só com o header;
+  - diagrama de arquitetura com a etapa de limpeza (`netezza/tmp/`) e o fluxo de cada arquivo;
+  - seção 6 (Leitura do DAT) reescrita: parâmetros de formato da `ctl_parametros`, leitor atual, limpeza e os 6 modos
+    (como funciona, quando usar, cuidados), opções da exportação do Netezza; sai o formato em propriedades da tabela;
+  - seção 11: página Vazão e os nomes atuais (modo DESPACHANTE/JOB no painel de custo).
+  - seção 4: exemplo do DAT no formato atual (header, aspas simples, escapes, registro em várias linhas); seção 5: limpeza, DAT só com o header e nr_cpr no REPLACE WHERE.
+- Sem mudança de código.
+
 ## [1.002] · 26/10/2026
 
 - Dashboard **PLHDWA · Execução**: página nova **Vazão** (decisão 40), por hora de conclusão, 30 dias:

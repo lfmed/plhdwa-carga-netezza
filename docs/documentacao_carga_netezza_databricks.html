@@ -122,10 +122,11 @@
 <header class="hero">
   <div class="wrap">
     <h1>Carga Netezza → Databricks via S3 (DAT + CTL)</h1>
-    <p>Especificação, arquitetura, regras de processamento, operação e resultados. <b>Versão final</b>: o motor está implementado e testado no workspace
-       (25 tipos de arquivo, 356 arquivos num único lote, 0 erros). As rodadas de decisão anteriores ficam registradas como histórico na seção 2.</p>
+    <p>Especificação, arquitetura, regras de processamento, operação e resultados. O motor está implementado e testado no workspace
+       (teste final de 01/10: 25 tipos de arquivo, 356 arquivos num único lote, 0 erros) e evolui por versões <b>1.NNN</b>: cada mudança
+       vira uma decisão na seção 2 e uma entrada no <code>CHANGELOG.md</code> do repositório.</p>
     <div class="tags">
-      <span class="tag hot">Versão final · v1.1 · 01/10/2026</span>
+      <span class="tag hot">Versão 1.003 · 26/10/2026</span>
       <span class="tag">Netezza na AWS → S3</span>
       <span class="tag">Modo por objeto: DESPACHANTE ou JOB</span>
       <span class="tag">Vaga por arquivo · 24 + 24</span>
@@ -166,7 +167,7 @@
   <b>despachante</b>, e cada execução dele é um <b>lote</b>. Para cada objeto com arquivo pendente, o despachante usa o <b>modo de execução do objeto</b>,
   definido na <code>ctl_parametros</code> (coluna <code>execucao</code>): <b>DESPACHANTE</b> (thread dentro do despachante) ou <b>JOB</b> (job independente, Standard ou
   Performance Optimized, que segue com os arquivos do mesmo objeto). <b>A vaga é do arquivo</b>: quando um arquivo termina, a vaga é
-  preenchida na hora pelo próximo arquivo elegível, com prioridade para o objeto com mais trabalho pendente. Cada arquivo é validado, carregado num único commit Delta (REPLACE WHERE na FATO, substituição total na DIM) e
+  preenchida na hora pelo próximo arquivo elegível, com prioridade para o objeto com mais trabalho pendente. Cada arquivo é validado, <b>limpo</b> (os escapes do Netezza, num dos 6 modos de limpeza do objeto, seção 6), carregado num único commit Delta (REPLACE WHERE na FATO, substituição total na DIM) e
   <b>sensibiliza a controle no Db2 do cliente por conta própria</b> (driver <code>ibm_db</code>): no fim de cada arquivo, CONCLUIDO (com quantidade, início e fim) ou ERRO (com a
   mensagem); o início fica no log do Databricks (decisão 14). O bundle é entregue parametrizado: nada de ambiente fica fixo no código (seção 18).</p>
 
@@ -176,7 +177,7 @@
     <div class="card kpi"><b>Onde roda</b><span>ctl_parametros.execucao: DESPACHANTE | JOB</span></div>
     <div class="card kpi"><b>Vagas</b><span>24 no despachante · 24 jobs · 1 por arquivo</span></div>
     <div class="card kpi"><b>Controle (Db2)</b><span>ibm_db · pool · início · erro · fim</span></div>
-    <div class="card kpi"><b>DAT ausente ou vazio</b><span>Erro, antes da carga</span></div>
+    <div class="card kpi"><b>DAT ausente ou vazio</b><span>Erro, antes da carga · só o header = sucesso (0 registros)</span></div>
     <div class="card kpi"><b>Erro</b><span>Trava só o objeto</span></div>
     <div class="card kpi"><b>Teste final</b><span>356 arquivos · 19 min · 22 s/arquivo</span></div>
   </div>
@@ -402,6 +403,11 @@
     <text x="300" y="386" class="s">CTL + DAT com erro</text>
     <text x="300" y="399" class="s">aguardando análise</text>
 
+    <rect x="286" y="505" width="218" height="52" rx="9" class="box"/>
+    <text x="300" y="525" class="t">netezza/tmp/</text>
+    <text x="300" y="542" class="s">DAT limpo · apagado no fim</text>
+    <path d="M562 405 L504 520" class="edge"/>
+    <text x="452" y="498" class="al">limpeza</text>
     <text x="296" y="440" class="al">⑧ sucesso: apaga após controle OK</text>
     <text x="296" y="456" class="s">CTL primeiro, depois DAT</text>
     <text x="296" y="480" class="al">⑧ erro: move p/ erro/</text>
@@ -423,7 +429,7 @@
     <text x="578" y="302" class="s">objetos com execucao = JOB · mesmo lote</text>
     <text x="578" y="324" class="s">• carga_arquivo_perf | carga_arquivo_std (tipo_job)</text>
     <text x="578" y="341" class="s">• compute isolado; arranque 1× por objeto (até 20 arq.)</text>
-    <text x="578" y="358" class="s">• mesmo código das threads do despachante</text>
+    <text x="578" y="358" class="s">• mesmo código: valida → limpa (tmp/) → carrega</text>
     <text x="578" y="375" class="s">• controle: CONCLUIDO | ERRO (fim)</text>
     <text x="578" y="392" class="s">• log → apaga / erro/</text>
     <text x="578" y="409" class="s">• tag OWNER = PLHDWA</text>
@@ -478,7 +484,7 @@
     <path d="M1075 280 V335" class="edge dash"/>
     <rect x="984" y="460" width="182" height="80" rx="9" class="box"/>
     <text x="998" y="482" class="t">Dashboards PLHDWA</text>
-    <text x="998" y="500" class="s">execução: lotes, jobs</text>
+    <text x="998" y="500" class="s">execução: lotes, jobs, vazão</text>
     <text x="998" y="515" class="s">custo: system.billing</text>
     <text x="998" y="530" class="s">(filtro pela tag)</text>
     <path d="M926 481 H984" class="edge"/>
@@ -487,6 +493,10 @@
   </svg>
   </div>
   <div class="callout ok"><b>“Um arquivo em cada JOB”, onde faz sentido:</b> objetos com <code>execucao = JOB</code> na <code>ctl_parametros</code> têm uma execução de job por arquivo, com compute isolado e visibilidade no Jobs. Os demais (a grande maioria) rodam em threads dentro do despachante, sem arranque por arquivo. Quem decide é o cadastro do objeto, não o tamanho do arquivo.</div>
+  <div class="callout"><b>Cada arquivo, em qualquer modo de execução</b> (thread do despachante ou job independente, mesmo código):
+  valida o par CTL + DAT → confere o header → <b>limpa o DAT</b> (modo da <code>limpeza_modo</code>; arquivo limpo em <code>tmp/</code>)
+  → lê com o schema da tabela → <code>REPLACE WHERE</code> num commit → controle no Db2 (CONCLUIDO · ERRO) → apaga o par (sucesso) ou move
+  para <code>erro/</code> (erro, objeto travado até o DESBLOQUEIO). Detalhes na seção 6 e no documento de objetos travados.</div>
 </section>
 
 <!-- 4 -->
@@ -508,13 +518,13 @@
 Cd_obj|cd_inst|nr_cpr|dt_mov
 1230|3001,3002,3087|202609|2026-09-30
 
-<span class="c"># DAT, formato preferencial (CSV_ASPAS): texto entre aspas; "|" dentro das aspas é conteúdo</span>
-<span class="s">"cod_instituicao"|"dt_movimento"|"nr_contrato"|"ds_observacao"|"vl_parcela"</span>
-3001|"2026-09-30"|"000123"|"cliente pediu 2|3 vias"|1520.35
-3002|"2026-09-30"|"000456"|""|                       <span class="c"># "" = texto vazio · vazio sem aspas = NULL</span>
-
-<span class="c"># DAT, formato alternativo (ESCAPE_BARRA): sem aspas, "|" e "\" escapados com "\"</span>
-3001|2026-09-30|000123|cliente pediu 2\|3 vias|1520.35</pre>
+<span class="c"># DAT (exportação do Netezza): header na 1ª linha; texto entre aspas simples; "\" escapa (seção 6)</span>
+<span class="s">COD_INSTITUICAO|DT_MOVIMENTO|NR_CONTRATO|DS_OBSERVACAO|VL_PARCELA</span>
+3001|2026-09-30|000123|'cliente pediu 2\|3 vias'|1520.35   <span class="c"># \| vira | na limpeza</span>
+3002|2026-09-30|000456|\null|980.00                      <span class="c"># \null = NULL</span>
+3003|2026-09-30|000789|'linha 1
+linha 2'|75.10                                          <span class="c"># registro em várias linhas</span>
+<span class="c"># só o header (sem registros) = sucesso: a carga substitui por vazio (decisão 34)</span></pre>
 
   <h3>Ciclo de vida</h3>
   <div class="states">
@@ -538,10 +548,10 @@ Cd_obj|cd_inst|nr_cpr|dt_mov
     <li><h4>Disparo e lote <span class="who dbx">File Arrival</span></h4><p>O gatilho inicia o despachante (ou enfileira, se já houver um rodando). A execução é um <b>lote</b>: <code>log_lote</code> recebe INICIADO com os pendentes.</p></li>
     <li><h4>Ciclo do despachante</h4><p>A cada <code>ciclo_s</code> (~5–10 s): relê <code>ctl_execucao</code>, a pasta e os jobs; descarta concluídos e objetos travados ou já em processamento; agrupa por objeto e ordena por data de geração. <b>Entre um ciclo e outro</b>, cada vaga que libera é preenchida na hora com o que já está em memória.</p></li>
     <li><h4>Modo de execução e prioridade</h4><p>Coluna <code>execucao</code> da <code>ctl_parametros</code>: <b>DESPACHANTE</b> → 1 thread para <b>1 arquivo</b>, que devolve a vaga ao terminar; <b>JOB</b> → <code>run_now</code> do job do tipo da coluna <code>tipo_job</code>, que segue com os próximos arquivos do mesmo objeto. Vai primeiro o objeto com mais trabalho pendente. Sem vaga no modo, o objeto espera a próxima vaga.</p></li>
-    <li><h4>Validações</h4><p>CTL × nome, datas válidas, DAT presente (<code>ERRO_PAR</code>) e não vazio (<code>ERRO_DAT_VAZIO</code>), código cadastrado (<code>ERRO_CADASTRO</code>).</p></li>
+    <li><h4>Validações</h4><p>CTL × nome, datas válidas, DAT presente (<code>ERRO_PAR</code>) e não vazio (<code>ERRO_DAT_VAZIO</code>; só o header é sucesso, decisão 34), código cadastrado (<code>ERRO_CADASTRO</code>).</p></li>
     <li><h4>Início <span class="who db2">log</span></h4><p>Log: INICIADO (o arquivo aparece em “Em execução”). O Db2 não recebe o início (padrão, decisão 14). Só com <code>db2_registrar_inicio = true</code>: grava <code>EM_PROCESSAMENTO</code> para <b>este arquivo</b> e, se a controle não responder, <code>ERRO_DB2</code> e nada é carregado.</p></li>
-    <li><h4>Sequência, header e pré-checagem</h4><p>Geração maior que a última carregada; header igual ao layout; amostra de 10 mil linhas com o detector de formato (arquivos grandes, ou o 1º de cada objeto no lote).</p></li>
-    <li><h4>Carga atômica <span class="who dbx">Delta</span></h4><p>Leitura, validação e escrita na mesma leitura. FATO: <code>REPLACE WHERE</code> data (+ instituições); DIM: substitui tudo. Um commit.</p></li>
+    <li><h4>Sequência, header e pré-checagem</h4><p>Geração maior que a última carregada; header igual ao layout (<code>ERRO_SCHEMA</code>); amostra de 10 mil linhas com o detector de formato (arquivos grandes, ou o 1º de cada objeto no lote). Com a limpeza ligada, o DAT é limpo no modo da <code>limpeza_modo</code> e gravado em <code>tmp/</code> (seção 6).</p></li>
+    <li><h4>Carga atômica <span class="who dbx">Delta</span></h4><p>Leitura (do DAT ou do arquivo limpo), validação e escrita na mesma leitura. <code>filtrotabela = SIM</code>: <code>REPLACE WHERE</code> data + <code>nr_cpr</code> do CTL; <code>NAO</code>: substitui tudo. Um commit; o <code>tmp/</code> é apagado.</p></li>
     <li><h4>Controle: conclusão <span class="who db2">Db2</span></h4><p>Grava <code>CONCLUIDO</code> com quantidade de registros, início e fim. Se falhar: <code>ERRO_DB2</code>, os dados ficam e só a conclusão é refeita depois do desbloqueio.</p></li>
     <li><h4>Log e remoção <span class="who s3">S3</span></h4><p>Log CARREGADO, CONFIRMADO_DB2 e CONCLUIDO (com quantidade, início e fim); apaga o CTL e depois o DAT.</p></li>
     <li><h4>Em erro</h4><p>Log ERRO_* + controle <code>ERRO</code> com a mensagem + arquivos para <code>erro/</code> (exceto ERRO_DB2/EXECUCAO) + objeto travado até o DESBLOQUEIO. Os outros objetos seguem.</p></li>
@@ -552,43 +562,91 @@ Cd_obj|cd_inst|nr_cpr|dt_mov
 <!-- 6 -->
 <section id="leitura">
   <h2><span class="n">6</span>Leitura do DAT</h2>
+  <p class="lead">Para cada arquivo, na ordem: <b>(1)</b> valida o par CTL + DAT (DAT ausente = <code>ERRO_PAR</code>; 0 bytes ou em
+  branco = <code>ERRO_DAT_VAZIO</code>; <b>só o header = sucesso</b>, a carga substitui por vazio e a controle fica CONCLUIDO com 0
+  registros, decisão 34); <b>(2)</b> confere o header com as colunas da tabela, nome e ordem (<code>ERRO_SCHEMA</code>);
+  <b>(3)</b> com a limpeza ligada, limpa o DAT e grava o arquivo limpo em <code>tmp/&lt;arquivo&gt;/</code>; <b>(4)</b> lê como CSV com o
+  schema da tabela em <code>FAILFAST</code> (linha inválida = <code>ERRO_DADOS</code> com a linha); <b>(5)</b> aplica as regras de data
+  e <code>nr_cpr</code> do CTL; <b>(6)</b> grava num único commit Delta (<code>REPLACE WHERE</code>) e apaga o <code>tmp/</code>.</p>
+
   <div class="grid g2">
-    <div class="card"><h4><span class="pill p-ok">Preferencial</span> CSV_ASPAS · leitor nativo</h4>
+    <div class="card"><h4><span class="pill p-ok">Formato</span> por objeto, na <code>ctl_parametros</code></h4>
+  <table>
+    <tr><th>Coluna</th><th>Opção do leitor</th><th>Vazia (NULL) =</th></tr>
+    <tr><td><code>delimitador</code></td><td><code>sep</code></td><td><code>|</code></td></tr>
+    <tr><td><code>encoding</code></td><td><code>encoding</code></td><td><b>UTF-8</b> (decisão 33; LATIN9 = <code>ISO-8859-15</code>)</td></tr>
+    <tr><td><code>header</code></td><td><code>header</code></td><td><code>true</code></td></tr>
+    <tr><td><code>quote</code> / <code>escape</code></td><td><code>quote</code> / <code>escape</code></td><td>sem (sem limpeza)</td></tr>
+    <tr><td><code>null_value</code></td><td><code>nullValue</code></td><td>vazio</td></tr>
+    <tr><td><code>date_format</code> / <code>timestamp_format</code></td><td><code>dateFormat</code> / <code>timestampFormat</code></td><td><code>yyyy-MM-dd</code> / <code>yyyy-MM-dd HH:mm[:ss]</code></td></tr>
+    <tr><td><code>limpeza</code></td><td>liga a limpeza</td><td>variável <code>limpeza_dat</code> (padrão <code>true</code>)</td></tr>
+    <tr><td><code>limpeza_modo</code></td><td>modo da limpeza</td><td><code>CLIENTE</code></td></tr>
+    <tr><td><code>limpeza_quote</code></td><td><code>quote</code> do arquivo limpo</td><td>aspa simples <code>'</code></td></tr>
+  </table></div>
+    <div class="card"><h4><span class="pill p-ok">Leitura</span> leitor CSV nativo</h4>
 <pre>df = (spark.read.format(<span class="s">"csv"</span>)
-  .option(<span class="s">"header"</span>, <span class="k">True</span>)
-  .option(<span class="s">"enforceSchema"</span>, <span class="k">False</span>)     <span class="c"># header × layout</span>
-  .option(<span class="s">"sep"</span>, <span class="s">"|"</span>).option(<span class="s">"quote"</span>, <span class="s">'"'</span>)
-  .option(<span class="s">"escape"</span>, meta.escape_aspas)    <span class="c"># padrão '\\' = ESCAPECHAR do Netezza</span>
-  .option(<span class="s">"encoding"</span>, <span class="s">"UTF-8"</span>)
-  .option(<span class="s">"nullValue"</span>, meta.null_value)  <span class="c"># = NULLVALUE do Netezza</span>
-  .option(<span class="s">"dateFormat"</span>, meta.formato_data)
-  .option(<span class="s">"timestampFormat"</span>, meta.formato_ts)
+  .schema(layout_da_tabela)                    <span class="c"># tipos da tabela destino</span>
+  .option(<span class="s">"sep"</span>, delimitador)
+  .option(<span class="s">"header"</span>, header)
+  .option(<span class="s">"encoding"</span>, encoding)              <span class="c"># arquivo limpo: UTF-8</span>
+  .option(<span class="s">"quote"</span>, quote)                    <span class="c"># arquivo limpo: limpeza_quote</span>
+  .option(<span class="s">"nullValue"</span>, null_value)
+  .option(<span class="s">"dateFormat"</span>, date_format)
+  .option(<span class="s">"timestampFormat"</span>, timestamp_format)
   .option(<span class="s">"mode"</span>, <span class="s">"FAILFAST"</span>)           <span class="c"># linha inválida aborta</span>
-  .schema(meta.layout).load(dat))</pre>
-      <p>Sem <code>multiLine</code> (não há quebra de linha no conteúdo), o arquivo de 150 GB é dividido em blocos e lido em paralelo.</p></div>
-    <div class="card"><h4><span class="pill p-media">Alternativa</span> ESCAPE_BARRA · parser próprio</h4>
-      <p>Se as aspas não forem adotadas para algum objeto: leitura como texto, <code>\\</code> trocado por um marcador temporário, split no <code>|</code> não escapado, remoção do escape e conversão de tipos. Tudo com funções nativas, sem UDF (detalhe na v0.3). O formato fica registrado por objeto nas propriedades <code>plhdwa.arquivo.quote</code> e <code>plhdwa.arquivo.escape</code> da tabela destino, então os dois convivem durante a transição.</p></div>
+  .load(dat_ou_arquivo_limpo))</pre>
+      <p>Da tabela destino o motor só usa o layout (colunas e tipos); o formato fica na <code>ctl_parametros</code> (decisão 18).
+      Sem registros em várias linhas, o arquivo é lido em pedaços, em paralelo.</p></div>
   </div>
 
-  <h3>Formato vem do comando de exportação do Netezza (R4, R5)</h3>
-  <p style="color:var(--muted);font-size:14px;margin-top:0">Como é o próprio Netezza que grava os arquivos, o formato fica definido nas opções da tabela externa usada na exportação. Pedir essas opções resolve R4 e R5 sem depender de amostra. Cada opção vira um parâmetro do leitor:</p>
+  <h3>Limpeza do DAT (pedido do cliente)</h3>
+  <p style="color:var(--muted);font-size:14px;margin-top:0">O Netezza escapa com <code>\</code> o que o leitor CSV não entende. A limpeza
+  aplica as regex do cliente nas linhas que têm <code>\</code>: barra que não escapa nada sai; <code>\|</code> vira <code>|</code>;
+  <code>\null</code> vira vazio (NULL). O texto vem entre aspas simples e pode ter quebra de linha (registro em várias linhas). O modo é
+  por objeto (<code>limpeza_modo</code>):</p>
   <table>
-    <tr><th>Opção da tabela externa (Netezza)</th><th>Parâmetro no Databricks</th><th>Padrão até confirmar</th></tr>
-    <tr><td><code>DELIMITER</code></td><td><code>sep</code></td><td><code>|</code> (confirmado)</td></tr>
-    <tr><td><code>QUOTEDVALUE</code></td><td><code>quote</code></td><td><code>DOUBLE</code> → <code>"</code> (em adoção, Q3)</td></tr>
-    <tr><td><code>ESCAPECHAR</code></td><td><code>escape</code></td><td><code>\</code> (confirmado na P1)</td></tr>
-    <tr><td><code>NULLVALUE</code></td><td><code>nullValue</code></td><td>Confirmar. O Netezza costuma usar o literal <code>NULL</code> quando a opção não é informada.</td></tr>
-    <tr><td><code>ENCODING</code></td><td><code>encoding</code></td><td>UTF-8 (confirmado)</td></tr>
-    <tr><td><code>DATESTYLE</code> / <code>DATEDELIM</code> / <code>TIMESTYLE</code></td><td><code>dateFormat</code> / <code>timestampFormat</code></td><td><code>yyyy-MM-dd</code> / <code>yyyy-MM-dd HH:mm:ss</code></td></tr>
-    <tr><td><code>DECIMALDELIM</code> (se usado)</td><td>tratamento na conversão</td><td>Ponto</td></tr>
-    <tr><td><code>INCLUDEHEADER</code></td><td><code>header</code></td><td>Ligado (confirmado)</td></tr>
+    <tr><th>Modo</th><th>Como funciona</th><th>Quando usar</th><th>Cuidados</th></tr>
+    <tr><td><b><code>CLIENTE</code></b> (padrão)</td><td>Arquivo limpo em partes, lidas em paralelo com <code>multiLine</code>; o registro cortado na fronteira entre
+      partes é reunido e conferido. Até <code>limpeza_estavel_mb</code> (2048 MB) grava antes a posição de cada linha
+      (<code>tmp/&lt;arquivo&gt;/_posicoes</code>), e as passadas não dependem da divisão do arquivo pelo Spark (decisão 32)</td>
+      <td>Padrão; objetos com registros em várias linhas</td>
+      <td>Conta as aspas (só no começo e no fim de campo, escapadas não contam, decisão 36). Uma aspa solta que inverte a contagem para com
+      <code>ERRO_DADOS</code> e a linha, o byte e o texto (decisões 36 a 38): ver com o notebook <code>diagnosticar_aspas</code></td></tr>
+    <tr><td><code>AUTO</code></td><td>Conta as linhas com aspa aberta: nenhuma = <code>PARALELA</code>; alguma = <code>CLIENTE</code></td>
+      <td>Objeto novo, sem saber se tem registros em várias linhas</td><td>Uma leitura a mais do arquivo</td></tr>
+    <tr><td><code>PARALELA</code></td><td>Arquivo limpo em partes sem header, lidas em paralelo, sem <code>multiLine</code></td>
+      <td>Objeto sem registros em várias linhas (a mais rápida)</td><td>Registro em várias linhas = erro</td></tr>
+    <tr><td><code>DIRETA</code></td><td>Regex e separação das colunas (<code>from_csv</code>) na mesma leitura, sem <code>tmp/</code></td>
+      <td>Idem, sem gravar o arquivo limpo</td><td>Idem</td></tr>
+    <tr><td><code>MULTILINHA</code></td><td>Arquivo limpo em um arquivo só (<code>coalesce(1)</code>) + <code>multiLine</code></td>
+      <td>Só arquivo pequeno</td><td>Tarefa única; no teste de 80 GB a ordem das linhas não se manteve</td></tr>
+    <tr><td><code>SINGLE</code></td><td>O código do cliente (<code>src/limpeza_single.py</code>, decisão 39): linha a linha, 4 regex, header tirado antes
+      de gravar, partes lidas com <code>multiLine</code> em <code>PERMISSIVE</code></td>
+      <td>Quando uma aspa solta para o <code>CLIENTE</code> (caso do DAT de 37 GB)</td>
+      <td>Registro em várias linhas na fronteira entre partes fica cortado; defeito vira nulo, sem erro; só UTF-8; <code>\|</code> é apagado.
+      Conferir a quantidade de registros com a origem</td></tr>
+  </table>
+
+  <h3>Formato vem do comando de exportação do Netezza (R4, R5)</h3>
+  <p style="color:var(--muted);font-size:14px;margin-top:0">É o próprio Netezza que grava os arquivos: cada opção da tabela externa da exportação vira uma coluna da
+  <code>ctl_parametros</code> (o conversor de DDL, <code>ferramentas/converter_ddl_netezza.py</code>, já preenche):</p>
+  <table>
+    <tr><th>Opção da tabela externa (Netezza)</th><th>Coluna na <code>ctl_parametros</code></th><th>Como ficou</th></tr>
+    <tr><td><code>DELIMITER</code></td><td><code>delimitador</code></td><td><code>|</code></td></tr>
+    <tr><td><code>QUOTEDVALUE</code></td><td><code>quote</code> · <code>limpeza_quote</code></td><td>Textos entre aspas simples, lidas no arquivo limpo (<code>limpeza_quote = '</code>)</td></tr>
+    <tr><td><code>ESCAPECHAR</code></td><td>limpeza</td><td><code>\</code>, tratado pelas regex da limpeza</td></tr>
+    <tr><td><code>NULLVALUE</code></td><td><code>null_value</code></td><td>Vazio; <code>\null</code> vira vazio na limpeza</td></tr>
+    <tr><td><code>ENCODING</code></td><td><code>encoding</code></td><td>UTF-8 quando vazio (decisão 33); o conversor avisa quando a DDL não traz</td></tr>
+    <tr><td><code>DATESTYLE</code> / <code>DATEDELIM</code> / <code>TIMESTYLE</code></td><td><code>date_format</code> / <code>timestamp_format</code></td><td><code>yyyy-MM-dd</code> / <code>yyyy-MM-dd HH:mm[:ss]</code></td></tr>
+    <tr><td><code>INCLUDEHEADER</code></td><td><code>header</code></td><td>Ligado</td></tr>
   </table>
 
   <h3>Detector de formato na pré-checagem</h3>
-  <div class="callout warn">Alguns desencontros de formato <b>não geram erro de leitura</b>: o dado só entra errado. Por isso a pré-checagem (10 mil linhas) procura, nas colunas texto:
+  <div class="callout warn">Alguns desencontros de formato <b>não geram erro de leitura</b>: o dado só entra errado. Por isso a pré-checagem
+  (<code>precheck_linhas</code>, 10 mil linhas; todo arquivo a partir de <code>precheck_min_mb</code>, 256 MB) procura, nas colunas texto:
   <ul>
     <li>sequências de escape que sobraram (<code>\|</code>, <code>"</code>, <code>\</code>): sinal de que o escape do leitor não bate com o da exportação;</li>
-    <li>o literal <code>NULL</code> ou campos vazios em proporção anormal: sinal de que <code>nullValue</code> está errado;</li>
+    <li>o literal <code>NULL</code> ou campos vazios em proporção anormal: sinal de que <code>null_value</code> está errado;</li>
     <li>aspas no início ou no fim do valor lido: sinal de que <code>quote</code> está errado.</li>
   </ul>
   O resultado vai para o log como <b>ALERTA_FORMATO</b>. Ele não trava o objeto, porque texto real pode conter barra invertida; o owner decide se ajusta o cadastro. A primeira carga de cada objeto deve ser feita em <b>hml</b>.</div>
@@ -737,6 +795,7 @@ v_arquivo_concluido · v_projecao_termino</pre>
     <tr><td><b>Em execução</b></td><td>Cards: <b>objetos em execução</b> · arquivos rodando no despachante · <b>jobs independentes em execução</b> · lotes em andamento · aguardando · travados · concluídos, registros e GB do dia · tabela de <b>objetos em execução</b> (1 linha por objeto: arquivo atual, modo, segundos, concluídos no lote) · tabela de arquivos em execução (estado, modo, há quanto tempo) · tabela de lotes · em andamento × vagas por modo · limites (<code>ctl_execucao</code>)</td></tr>
     <tr><td><b>Objetos e controle</b></td><td>Travados · eventos (filtros por status e objeto) · controle por arquivo (CONCLUIDO · ERRO, com início, fim e registros)</td></tr>
     <tr><td><b>Desempenho</b></td><td>Duração e vazão por modo e tipo de job · arquivos concluídos</td></tr>
+    <tr><td><b>Vazão</b></td><td>Por hora de conclusão (30 dias; filtros de período, modo e grupo): cards de arquivos, GB, registros, execuções, GB/min e espera média · arquivos, GB, registros e execuções por hora e modo · GB/min ao longo do tempo · espera (roteado → iniciado) × carga · resumo por hora, modo e grupo (decisão 40)</td></tr>
     <tr><td><b>Histórico</b></td><td>Arquivos por dia · erros por dia · resumo diário</td></tr>
   </table>
 
@@ -749,9 +808,9 @@ v_arquivo_concluido · v_projecao_termino</pre>
     <tr><th>Visual</th><th>Pergunta que responde</th></tr>
     <tr><td>Custo diário (DBU e US$) com tendência de 30 dias</td><td>Quanto custa a janela e se está subindo</td></tr>
     <tr><td>Custo por job (despachante × carga_arquivo × vigia)</td><td>Onde está o gasto</td></tr>
-    <tr><td>Custo por fila e por tipo de job</td><td>Vale a pena manter a fila em Performance Optimized?</td></tr>
+    <tr><td>Custo por modo (DESPACHANTE × JOB) e por tipo de job</td><td>Vale a pena manter objetos em JOB ou em Performance Optimized?</td></tr>
     <tr><td>Custo por TB carregado</td><td>Eficiência, comparável entre dias</td></tr>
-    <tr><td>Top objetos por custo</td><td>Quais tabelas pesam mais (M/G pelo custo exato da execução; P por rateio de GB, ver R26)</td></tr>
+    <tr><td>Top objetos por custo</td><td>Quais tabelas pesam mais (JOB pelo custo exato da execução; DESPACHANTE por rateio de GB, ver R26)</td></tr>
   </table>
 <pre><span class="c">-- base do painel de custo</span>
 <span class="k">SELECT</span> u.usage_date,
